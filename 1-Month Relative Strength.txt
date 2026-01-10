@@ -1,0 +1,44 @@
+// inspired by @jfsrev https://x.com/jfsrev/status/1806709652975141131
+//@version=5
+indicator("1-Month RS", overlay=false)
+
+showStrength = input.bool(true, title="Show 1-Month Relative Strength vs SPY", group = '1-Month RS vs SPY')
+refSymbol = input.symbol("SPY", "Reference Symbol")
+lookback = input.int(26, title="Lookback Period, N = 26, 78, 156, or 312", minval=2, maxval=500, step=1)
+
+// Relative strength
+refPrice = request.security(refSymbol, timeframe.period, close)
+relativeStrength = close / refPrice
+
+// Track RS values in array
+var float[] rsArray = array.new_float()
+array.push(rsArray, relativeStrength)
+if array.size(rsArray) > lookback
+    array.shift(rsArray)
+
+// Compute percentile
+float percentile = na
+if array.size(rsArray) == lookback
+    float[] sorted = array.copy(rsArray)
+    array.sort(sorted, order.ascending)
+    float currentRS = array.get(rsArray, array.size(rsArray) - 1)
+    int rank = array.indexof(sorted, currentRS)
+    percentile := rank / (lookback - 1) * 100
+
+// Color logic — NO return type specified
+VeryLow        = #d8e6ef  // percentile < 10
+Low            = #d3eeff  // 10 <= percentile < 30
+ModerateLow    = #afe0ff  // 30 <= percentile < 50
+Moderate       = #96d7ff  // 50 <= percentile < 70
+ModerateHigh   = #80ceff  // 70 <= percentile < 85
+High           = #52bdff  // 85 <= percentile < 95
+VeryHigh       = #30b0ff  // percentile >= 95
+
+getColor(p) =>
+    p < 10 ? VeryLow : p < 30 ? Low : p < 50 ? ModerateLow : p < 70 ? Moderate : p < 85 ? ModerateHigh : p < 95 ? High : VeryHigh
+
+// Plot colored histogram
+plot(showStrength and not na(percentile) ? percentile : na, title="RS Percentile Histogram", style=plot.style_columns, color=showStrength and not na(percentile) ? getColor(percentile) : na, linewidth=2)
+
+// median reference
+hline(50, "Median", color=color.gray, linestyle=hline.style_dotted)
