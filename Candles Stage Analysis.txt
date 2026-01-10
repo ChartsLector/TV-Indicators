@@ -1,0 +1,209 @@
+// Stage definitions are copied from @TradeDudeNYC's indicator (https://www.tradingview.com/v/agQTA0Vq/) & modified later
+//@version=6
+indicator("Candles Stage Analysis", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// === Stage Analysis Inputs ===
+stage_group = "Stage Analysis Settings"
+lenATR   = input.int(14, "ATR Length (Wilder)", group=stage_group)
+lenEMA5 = input.int(5, "EMA5 Length", group=stage_group)
+lenEMA10 = input.int(10, "EMA10 Length", group=stage_group)
+lenema20 = input.int(20, "Ema20 Length", group=stage_group)
+lenSMA50 = input.int(50, "SMA50 Length", group=stage_group)
+boLookback = input.int(20, "Breakout/Breakdown Lookback", minval=5, group=stage_group)
+basingBandATR = input.float(1.0, "1A: Price within ±ATR of SMA50", step=0.1, group=stage_group)
+maCompressionATR = input.float(1.5, "1A: MA spread ≤ x ATR", step=0.1, group=stage_group)
+plotStyle = input.string("Candles", "Plot Style", options=["Bars", "Candles"], group=stage_group)
+colorChoice = input.string("White", "Label Text Color", options=["White", "Black"],group=stage_group)
+textColor = colorChoice == "White" ? color.white : color.black
+
+// === Stage Analysis Core Calculations ===
+ema5 = ta.ema(close, lenEMA5)
+ema10 = ta.ema(close, lenEMA10)
+ema20 = ta.ema(close, lenema20)
+sma50 = ta.sma(close, lenSMA50)
+atr   = ta.atr(lenATR)
+
+// ATR multiple from SMA50 (signed)
+atrx    = (close - sma50) / atr
+atrx1    = (close[1] - sma50[1]) / atr[1]
+atrx2    = (close[2] - sma50[2]) / atr[2]
+atrxAbs = math.abs(atrx)
+maSpread  = math.max(math.max(ema10, ema20), sma50) - math.min(math.min(ema10, ema20), sma50)
+
+// Trend alignment (+ slope)
+ema10Up = ema10 > ema10[1]
+ema20Up = ema20 > ema20[1]
+sma50Up = sma50 > sma50[1]
+upAlign   = close > ema10 and ema10 > ema20 and ema20 > sma50 // and ema10Up and ema20Up and sma50Up
+downAlign = close < ema10 and ema10 < ema20 and ema20 < sma50 // and not ema10Up and not ema20Up and not sma50Up
+
+// Breakout / breakdown
+breakout  = close > ta.highest(high, boLookback)[1]
+breakdown = close < ta.lowest(low,  boLookback)[1]
+
+// Extensions
+extBull = upAlign and atrx >= 7
+exhBull = upAlign and atrx >= 11 
+extBear = downAlign and atrx <= -7
+
+// Transitional proxies
+basing   = math.abs(close - sma50) <= basingBandATR*atr and maSpread <= maCompressionATR*atr
+meanRev  = not upAlign and not downAlign and not basing and close >= ema20 and ema10 >= ema20
+fadeA    = not extBull and close >= sma50 and ((upAlign and (close < ema10 or not ema10Up)) or (ema10 >= ema20 and close < ema10))
+exhA     = exhBull and close >= sma50 and ((upAlign and (close < ema10 or not ema10Up)) or (ema10 >= ema20 and close < ema10))
+fadeB    = not extBear and close >= sma50 and ema10 < ema20
+
+// === Stage selection ===
+ST_1A = 1
+ST_1B = 2
+ST_2A = 3
+ST_2B = 4
+ST_2C = 5
+ST_2D = 6
+ST_3A = 7
+ST_3B = 8
+ST_4A = 9
+ST_4B = 10
+ST_4C = 11
+ST_NA = 12
+
+stage = if extBull
+    ST_2C
+else if extBear
+    ST_4C
+else if upAlign
+    breakout ? ST_2B : ST_2A
+else if exhA
+    ST_2D
+else if downAlign
+    breakdown ? ST_4B : ST_4A
+else if sma50 > ema10 and ema10 > ema5
+    ST_4A
+else if fadeB
+    ST_3B
+else if fadeA
+    ST_3A
+else if meanRev
+    ST_1B
+else if close < sma50 and close > ema10 and ema10 < ema20
+    ST_1A
+else
+    ST_NA
+
+stageName = if stage==ST_1A
+    "1A Basing"
+else if stage==ST_1B
+    "1B Mean Reversion"
+else if stage==ST_2A
+    "2A Bullish Trend"
+else if stage==ST_2B
+    "2B Breakout Confirm"
+else if stage==ST_2C
+    "2C Extended Bullish (>=7x)"
+else if stage==ST_2D
+    "2C Exhausted Bullish (>=11x)"
+else if stage==ST_3A
+    "3A Bullish Fade"
+else if stage==ST_3B
+    "3B Fade Confirm"
+else if stage==ST_4A
+    "4A Bearish Trend"
+else if stage==ST_4B
+    "4B Breakdown Confirm"
+else if stage==ST_4C
+    "4C Extended Bearish (<=-7x)"
+else if stage==ST_NA
+    "NA Undefined"
+
+color c1A  = color.rgb(255, 217, 0)
+color c1Ad = color.rgb(255, 217, 0, 50)
+color c1B  = color.rgb(165, 206, 3)
+color c1Bd = color.rgb(165, 206, 3, 50)
+color c2A  = color.rgb(89, 191, 94)
+color c2Ad = color.rgb(89, 191, 94, 50)
+color c2B  = color.rgb(71, 153, 75)
+color c2Bd = color.rgb(71, 153, 75, 50)
+color c2C  = color.rgb(46, 102, 55)
+color c2Cd = color.rgb(46, 102, 55, 50)
+color c2D  = color.rgb(10, 105, 123)
+color c2Dd = color.rgb(10, 105, 123, 50)
+color c3A  = color.rgb(63, 94, 205)
+color c3Ad = color.rgb(63, 94, 205, 50)
+color c3B  = color.rgb(169, 206, 244)
+color c3Bd = color.rgb(169, 206, 244, 50)
+color c4A  = color.rgb(255, 93, 93)
+color c4Ad = color.rgb(255, 93, 93, 50)
+color c4B  = color.rgb(183, 0, 76)
+color c4Bd = color.rgb(183, 0, 76, 50)
+color c4C  = color.rgb(182, 129, 234)
+color c4Cd = color.rgb(182, 129, 234, 50)
+color cNA  = color.rgb(160, 160, 160)
+color cNAd = color.rgb(160, 160, 160, 50) 
+// Neutral bars (rare ties) = gray
+
+stageColor = if stage==ST_1A and close > close[1]
+    c1A
+else  if stage==ST_1A and close < close[1]
+    c1Ad
+else if stage==ST_1B and close > close[1]
+    c1B
+else if stage==ST_1B and close < close[1]
+    c1Bd
+else if stage==ST_2A and close > close[1]
+    c2A
+else if stage==ST_2A and close < close[1]
+    c2Ad
+else if stage==ST_2B and close > close[1]
+    c2B
+else if stage==ST_2B and close < close[1]
+    c2Bd
+else if stage==ST_2C and close > close[1]
+    c2C
+else if stage==ST_2C and close < close[1]
+    c2Cd
+else if stage==ST_2D and close > close[1]
+    c2D
+else if stage==ST_2D and close < close[1]
+    c2Dd
+else if stage==ST_3A and close > close[1]
+    c3A
+else if stage==ST_3A and close < close[1]
+    c3Ad
+else if stage==ST_3B and close > close[1]
+    c3B
+else if stage==ST_3B and close < close[1]
+    c3Bd
+else if stage==ST_4A and close > close[1]
+    c4A
+else if stage==ST_4A and close < close[1]
+    c4Ad
+else if stage==ST_4B and close > close[1]
+    c4B
+else if stage==ST_4B and close < close[1]
+    c4Bd
+else if stage==ST_4C and close > close[1]
+    c4C
+else if stage==ST_4C and close < close[1]
+    c4Cd
+else if stage==ST_NA  and close > close[1]
+    cNA
+else if stage==ST_NA  and close < close[1]
+    cNAd
+
+// Optional: expose text label (toggle in settings)
+showStageLabel = input.bool(false, "Show Stage Label", inline="L")
+var label lb = na
+if showStageLabel and barstate.islast
+    label.delete(lb)
+    stxt = stage==ST_2B ? "2B Breakout Confirm" : stage==ST_4B ? "4B Breakdown Confirm" : stage==ST_2C ? "2C Extended Bullish" : stage==ST_2D ? "2D Exhausted Bullish" : stage==ST_4C ? "4C Extended Bearish" : stage==ST_2A ? "2A Bullish Trend" : stage==ST_4A ? "4A Bearish Trend" : stage==ST_3B ? "3B Fade Confirm" : stage==ST_3A ? "3A Bullish Fade" : stage==ST_1A ? "1A Upward Pivot" : stage==ST_1B ? "1B Mean Reversion" : stage==ST_NA ? "Undefined" : "Neutral"
+    lb := label.new(bar_index, high, stxt, style=label.style_label_left, textcolor=textColor, color=stageColor, size=size.small)
+
+// Define display modes based on selection
+showBars    = plotStyle == "Bars"    ? display.all - display.price_scale - display.status_line : display.none
+showCandles = plotStyle == "Candles" ? display.all - display.price_scale - display.status_line : display.none
+
+// Plot bar and candle versions, but only one will be visible
+plotbar(open, high, low, close, color=stageColor, title="Stage Bars", display=showBars)
+plotcandle(open, high, low, close, color=stageColor, wickcolor=stageColor, bordercolor=stageColor, title="Stage Candles", display=showCandles)
+
+barcolor(stageColor)
