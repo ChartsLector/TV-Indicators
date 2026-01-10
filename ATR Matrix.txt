@@ -1,0 +1,89 @@
+// Inspired by SteveDJacobs ATR Matrix https://x.com/SteveDJacobs/status/1936015163624206660
+//@version=5
+indicator("ATR Matrix (SMA50 • ATR x-multiples)", overlay=true, max_labels_count=500)
+
+// Inputs
+atrLen = input.int(14, "ATR Length")
+maLen = input.int(50, "SMA Length")
+entryPrice = input.float(0.0, "Entry Price (0 = use Close)", minval=0.0, step=0.01)
+stopX = input.float(1.5, "Stop Multiple (for Reward/Risk)", step=0.1, minval=0.1)
+decimals = input.int(2, "Decimals", minval=0, maxval=6)
+showTicker = input.bool(true, "Show symbol/last block")
+showRR = input.bool(true, "Show Return Max & Reward/Risk")
+tableSize = input.string("normal", "Table Text Size", options=["tiny","small","normal","large","huge"])
+
+// Core calcs (ratios for %)
+atr = ta.atr(atrLen)
+sma50 = ta.sma(close, maLen)
+curr = close
+ent = entryPrice > 0 ? entryPrice : curr
+atrRatio = atr / curr
+extAtr = (curr - sma50) / atr
+extRatio = curr / sma50 - 1.0
+extAtrAsPctOfATR = atrRatio == 0 ? na : extRatio / atrRatio
+
+// Levels: –1, –2 from ENTRY; 0–11 from SMA50
+f_lvl_from_entry(m) => ent + m * atr
+f_lvl_from_sma(n) => sma50 + n * atr
+stop_m2 = f_lvl_from_entry(-2)
+stop_m1 = f_lvl_from_entry(-1)
+levels = array.new_float()
+for i = 0 to 11
+    array.push(levels, f_lvl_from_sma(i))
+
+// Return to 11× from ENTRY and R/R vs stopX*ATR
+retMaxRatio = (array.get(levels, 11) - ent) * 100 / ent
+risk = stopX * atr
+reward = array.get(levels, 11) - ent
+rr = risk == 0 ? na : reward / risk
+
+// Formatting helpers
+fpx(v) => na(v) ? "—" : str.tostring(math.round(v * math.pow(10, decimals)) / math.pow(10, decimals))
+fpct(r) => na(r) ? "—" : str.tostring(r, format.percent)
+
+// Table
+var table tbl = na
+int COLS = 24
+
+// Column map
+c0=0, c1=1, c2=2, c3=3, c4=4, c5=5, c6=6, c7=7, c8=8, c9=9, c10=10, c11=11, c12=12, c13=13, c14=14, c15=15, c16=16, c17=17, c18=18, c19=19, c20=20, c21=21, c22=22, c23=23
+
+// Colors
+colBase=color.new(color.silver,10), colHead=color.new(color.black,0), colStop=color.new(color.red,0), colEntry=color.new(color.teal,0), colHold=color.new(color.yellow,0), colScale=color.new(color.orange,0), colNeutral=color.new(color.gray,0)
+
+// Header text
+hdr = array.from("MATRIX","Ticker","Last","ATR $","ATR %","ATR Ext","ATR Ext % of ATR","STOP -2","STOP -1","SMA50","0xATR","1xATR","2xATR","3xATR","4xATR","5xATR","6xATR","7xATR","8xATR","9xATR","10xATR","11xATR","Return Max","Reward/Risk")
+
+// Colors per column (single-line)
+getHeadColor(i) => i==c7 or i==c8 ? colStop : i>=c10 and i<=c14 ? colEntry : i==c15 or i==c16 ? colHold : i>=c17 and i<=c21 ? colScale : i==c9 ? colNeutral : colHead
+getBodyColor(i) => getHeadColor(i)  // <<< same colors as header
+
+if barstate.isfirst
+    tbl := table.new(position=position.bottom_center, columns=COLS, rows=2, border_width=1)
+    for col = 0 to COLS - 1
+        table.cell(tbl, col, 0, array.get(hdr, col), text_color=color.white, text_halign=text.align_center, bgcolor=getHeadColor(col), text_size=tableSize)
+
+if barstate.islast
+    if showTicker
+        table.cell(tbl, c0, 1, "Info.", text_color=color.white, bgcolor=color.new(color.blue,0), text_halign=text.align_center, text_size=tableSize)
+        table.cell(tbl, c1, 1, syminfo.ticker, text_color=color.white, bgcolor=getBodyColor(c1), text_size=tableSize)
+        table.cell(tbl, c2, 1, fpx(curr), text_color=color.white, bgcolor=getBodyColor(c2), text_size=tableSize)
+        table.cell(tbl, c3, 1, fpx(atr), text_color=color.white, bgcolor=getBodyColor(c3), text_size=tableSize)
+        table.cell(tbl, c4, 1, fpct(atrRatio), text_color=color.white, bgcolor=getBodyColor(c4), text_size=tableSize)
+        table.cell(tbl, c5, 1, fpx(extAtr), text_color=color.white, bgcolor=getBodyColor(c5), text_size=tableSize)
+        table.cell(tbl, c6, 1, fpx(extAtrAsPctOfATR), text_color=color.white, bgcolor=getBodyColor(c6), text_size=tableSize)
+    else
+        table.cell(tbl, c0, 1, "", bgcolor=getBodyColor(c0), text_size=tableSize)
+        for col = c1 to c6
+            table.cell(tbl, col, 1, "", bgcolor=getBodyColor(col), text_size=tableSize)
+    table.cell(tbl, c7, 1, fpx(stop_m2), text_color=color.white, bgcolor=getBodyColor(c7), text_size=tableSize)
+    table.cell(tbl, c8, 1, fpx(stop_m1), text_color=color.white, bgcolor=getBodyColor(c8), text_size=tableSize)
+    table.cell(tbl, c9, 1, fpx(sma50), text_color=color.white, bgcolor=getBodyColor(c9), text_size=tableSize)
+    for k = 0 to 11
+        table.cell(tbl, c10 + k, 1, fpx(array.get(levels, k)), text_color=color.white, bgcolor=getBodyColor(c10 + k), text_size=tableSize)
+    if showRR
+        table.cell(tbl, c22, 1, fpct(retMaxRatio), text_color=color.white, bgcolor=getBodyColor(c22), text_size=tableSize)
+        table.cell(tbl, c23, 1, na(rr) ? "—" : str.tostring(rr, format.mintick), text_color=color.white, bgcolor=getBodyColor(c23), text_size=tableSize)
+    else
+        table.cell(tbl, c22, 1, "", bgcolor=getBodyColor(c22), text_size=tableSize)
+        table.cell(tbl, c23, 1, "", bgcolor=getBodyColor(c23), text_size=tableSize)
