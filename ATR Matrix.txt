@@ -17,10 +17,10 @@ atr = ta.atr(atrLen)
 sma50 = ta.sma(close, maLen)
 curr = close
 ent = entryPrice > 0 ? entryPrice : curr
-atrRatio = atr / curr
+atrRatio = (atr / curr)*100
 extAtr = (curr - sma50) / atr
 extRatio = curr / sma50 - 1.0
-extAtrAsPctOfATR = atrRatio == 0 ? na : extRatio / atrRatio
+extAtrAsPctOfATR = atrRatio == 0 ? na : (extRatio / atrRatio)*100
 
 // Levels: –1, –2 from ENTRY; 0–11 from SMA50
 f_lvl_from_entry(m) => ent + m * atr
