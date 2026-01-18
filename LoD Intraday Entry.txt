@@ -1,0 +1,102 @@
+// Modified https://www.tradingview.com/v/Z01tNH1E/ by @BigWaveChartist
+//@version=5
+indicator("LoD Intraday Entry", overlay=true)
+
+symtick = syminfo.tickerid
+len = input(50, "Volume MA Length", group="$Vol.")
+vol = request.security(symtick, "D", volume)
+ma  = request.security(symtick, "D", ta.sma(vol, len))
+relVol = vol / ma * 100
+capital = input.float(title="Total Capital $", defval=100000, minval=1, group="ATR")
+riskTolerance = input.float(title="Risk Tolerance %", defval=2, minval=0.1, maxval=10, step=0.1, group="ATR")
+atr_percentage = input.float(60.0, title="ATR Percentage %", minval=0.1, maxval=200.0, step=0.1)
+showInfo = input.bool(true, title="Show Info.", group="ATR")
+atrLength = input.int(14, title="ATR Length", group="ATR")
+smaLength = input.int(50, title="50 SMA Length", group="ATR")
+emaLength = input.int(20, title="20 EMA Length", group="ATR")
+smoothingLength = input.int(5, title="Smoothing Length", group="ATR")
+useEMA = input.bool(true, title="Use EMA for Smoothing (false uses SMA)", group="ATR")
+
+atr = request.security(syminfo.tickerid, "D", ta.atr(atrLength))
+sma50 = request.security(syminfo.tickerid, "D", ta.sma(close, smaLength))
+ema20 = request.security(syminfo.tickerid, "D", ta.ema(close, emaLength))
+todayClose = request.security(syminfo.tickerid, "D", close)
+todayLow = request.security(syminfo.tickerid, "D", low)
+
+atrClosePercent = (atr / todayClose) * 100
+percentGain = ((close - sma50) / sma50) * 100
+XatrPercent = percentGain / atrClosePercent
+percentGains = ((close - ema20) / ema20) * 100
+XatrPercents = percentGains / atrClosePercent
+LoDdist = 100 * (todayClose - todayLow) / atr
+
+today_high = request.security(syminfo.tickerid, "D", high)
+tickerRisk = -todayLow + (1 + (atrClosePercent / 100)) * todayClose
+maxBuy = todayLow + (atr_percentage * atrClosePercent * todayLow / 10000)
+minBuy = today_high - (atr_percentage * atrClosePercent * todayLow / 10000)
+
+riskPerTrade = capital * (riskTolerance / 100)
+shares = riskPerTrade / tickerRisk
+
+optiBuy = (minBuy <= maxBuy) ? minBuy : na
+dontBuy = na(optiBuy)
+
+stopLoss = todayLow - (0.333 * atr)
+current_risk = math.abs(todayClose - stopLoss) * 100 / todayClose
+
+show_label = input.bool(true, title="Show Label")
+line_color_input = input.color(color.rgb(9, 115, 201), title="Line Color")
+line_width = input.int(2, title="Line Width", minval=1, maxval=5)
+line_length = input.int(10, title="Line Length (bars)", minval=1, maxval=50)
+reference_point = input.string("Low", title="Reference Point", options=["Low", "High"])
+line_style_input = input.string("Solid", title="Line Style", options=["Solid", "Dashed", "Dotted"])
+
+line_style = switch line_style_input
+    "Solid"  => line.style_solid
+    "Dashed" => line.style_dashed
+    "Dotted" => line.style_dotted
+    => line.style_solid
+
+// Dynamic color: RED when it signals "Don't buy"
+line_color = dontBuy ? color.red : line_color_input
+
+// Track current day's high and low using session-based logic
+is_new_day = ta.change(time("1D"))
+var float current_day_high = na
+var float current_day_low = na
+
+if is_new_day or na(current_day_high) or na(current_day_low)
+    current_day_high := high
+    current_day_low := low
+else
+    current_day_high := math.max(current_day_high, high)
+    current_day_low := math.min(current_day_low, low)
+
+// Determine reference price based on user selection
+reference_price = reference_point == "Low" ? current_day_low : current_day_high
+
+// Calculate target price (distance uses your original daily-based todayLow logic)
+atr_distance = (atr_percentage * atrClosePercent * todayLow / 10000)
+target_price = reference_point == "Low" ? reference_price + atr_distance : reference_price - atr_distance
+
+// Track line and label
+var line current_line = na
+var label current_label = na
+
+if barstate.islast or barstate.isconfirmed
+    if not na(current_line)
+        line.delete(current_line)
+    if not na(current_label)
+        label.delete(current_label)
+
+    if timeframe.isminutes
+        start_bar = bar_index
+        end_bar = bar_index + line_length
+        current_line := line.new(x1=start_bar, y1=target_price, x2=end_bar, y2=target_price, color=line_color, width=line_width, style=line_style, extend=extend.none)
+
+        if show_label
+            label_text = str.format("Price {0}% ATR from \n {1} of Day is ${2} \n Optimal Price: ${3} \n Max. no. Shares: #{4} \n Stop Loss: ${5} & Risk: %{6} \n LoD: {7}% & RVol: {8}%", atr_percentage, reference_point, str.tostring(target_price, format.mintick), na(optiBuy) ? "Don't buy" : str.tostring(optiBuy, format.mintick), shares, str.tostring(stopLoss, format.mintick), str.tostring(current_risk, format.mintick), str.tostring(LoDdist, format.mintick), relVol)
+            current_label := label.new(x=end_bar + 1, y=target_price, text=label_text, color=line_color, textcolor=color.white, style=label.style_label_left, size=size.small)
+
+// Plot the target price as a reference
+plot(timeframe.isminutes ? target_price : na, title="LoD limit line", color=color.new(line_color, 80), linewidth=1, display=display.all - display.status_line - display.price_scale)
