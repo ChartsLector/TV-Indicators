@@ -57,8 +57,8 @@ line_style = switch line_style_input
     "Dotted" => line.style_dotted
     => line.style_solid
 
-// Dynamic color: RED when it signals "Don't buy"
-line_color = dontBuy ? color.red : line_color_input
+// Dynamic color: RED when it signals "Don't buy", Orange when Risk > 4%
+line_color = dontBuy ? color.red : current_risk > 4 ? color.rgb(168, 107, 0) : line_color_input
 
 // Track current day's high and low using session-based logic
 is_new_day = ta.change(time("1D"))
