@@ -9,6 +9,7 @@ ma  = request.security(symtick, "D", ta.sma(vol, len))
 relVol = vol / ma * 100
 capital = input.float(title="Total Capital $", defval=100000, minval=1, group="ATR")
 riskTolerance = input.float(title="Risk Tolerance %", defval=2, minval=0.1, maxval=10, step=0.1, group="ATR")
+ATRfraction = input.float(title="Percentage of ATR below the LoD", defval=0.33, minval=0.01, maxval=1, step=0.01, group="ATR")
 atr_percentage = input.float(60.0, title="ATR Percentage %", minval=0.1, maxval=200.0, step=0.1)
 showInfo = input.bool(true, title="Show Info.", group="ATR")
 atrLength = input.int(14, title="ATR Length", group="ATR")
@@ -41,7 +42,7 @@ shares = riskPerTrade / tickerRisk
 optiBuy = (minBuy <= maxBuy) ? minBuy : na
 dontBuy = na(optiBuy)
 
-stopLoss = todayLow - (0.333 * atr)
+stopLoss = todayLow - (ATRfraction * atr)
 current_risk = math.abs(todayClose - stopLoss) * 100 / todayClose
 
 show_label = input.bool(true, title="Show Label")
