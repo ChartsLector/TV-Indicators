@@ -1,10 +1,14 @@
 // inspired by @jfsrev https://x.com/jfsrev/status/1806709652975141131
+// and by @yang927 https://x.com/jfsrev/status/1900509842344980773
+// https://x.com/yang927/status/1812687265404952914
 //@version=5
 indicator("1-Month RS", overlay=false)
 
 showStrength = input.bool(true, title="Show 1-Month Relative Strength vs SPY", group = '1-Month RS vs SPY')
 refSymbol = input.symbol("SPY", "Reference Symbol")
 lookback = input.int(26, title="Lookback Period, N = 26, 78, 156, or 312", minval=2, maxval=500, step=1)
+alertLen = input.int(15, "Range sessions length", minval=1, group="Alerts")
+percentile50limitDays = input.int(12, "Least sessions length within the range", minval=1, group="Alerts")
 
 // Relative strength
 refPrice = request.security(refSymbol, timeframe.period, close)
@@ -42,3 +46,18 @@ plot(showStrength and not na(percentile) ? percentile : na, title="RS Percentile
 
 // median reference
 hline(50, "Median", color=color.gray, linestyle=hline.style_dotted)
+
+// Alert logic: percentile > 50 for 15 consecutive sessions (stays true after day 15)
+var int above50Streak = 0
+above50Streak := (not na(percentile) and percentile > 50) ? (nz(above50Streak[1]) + 1) : 0
+
+streakReached = above50Streak >= alertLen
+alertcondition(streakReached, title="RS > 50 for the selected range", message="RS has been > 50 for selected range of consecutive sessions.")
+
+// Alert logic: percentile > 50 for at least 12 session within the past 15 consecutive sessions
+percentile50 = percentile > 50
+percentile50Count = 0
+for i = 1 to 15
+    percentile50Count += percentile50[i] ? 1 : 0
+percentile50UpDays = percentile50Count >= percentile50limitDays
+alertcondition(percentile50UpDays, title="RS > 50 for at least some sessions within the range", message="RS > 50 for at least some sessions within the range.")
