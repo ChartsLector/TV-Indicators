@@ -1,6 +1,6 @@
 // Stage definitions are copied from @TradeDudeNYC's indicator (https://www.tradingview.com/v/agQTA0Vq/) & modified later
 //@version=6
-indicator("Candles Stage Analysis", overlay=true, max_labels_count=500, max_lines_count=500)
+indicator("Candle Stage Analysis", overlay=true, max_labels_count=500, max_lines_count=500)
 
 // === Stage Analysis Inputs ===
 stage_group = "Stage Analysis Settings"
@@ -31,15 +31,15 @@ atrxAbs = math.abs(atrx)
 maSpread  = math.max(math.max(ema10, ema20), sma50) - math.min(math.min(ema10, ema20), sma50)
 
 // Trend alignment (+ slope)
-ema10Up = ema10 > ema10[1]
-ema20Up = ema20 > ema20[1]
-sma50Up = sma50 > sma50[1]
-upAlign   = close > ema10 and ema10 > ema20 and ema20 > sma50 // and ema10Up and ema20Up and sma50Up
-downAlign = close < ema10 and ema10 < ema20 and ema20 < sma50 // and not ema10Up and not ema20Up and not sma50Up
+ema10Up = ema10 >= ema10[1]
+ema20Up = ema20 >= ema20[1]
+sma50Up = sma50 >= sma50[1]
+upAlign   = close >= ema10 and ema10 >= ema20 and ema20 >= sma50 // and ema10Up and ema20Up and sma50Up
+downAlign = close <= ema10 and ema10 <= ema20 and ema20 <= sma50 // and not ema10Up and not ema20Up and not sma50Up
 
 // Breakout / breakdown
-breakout  = close > ta.highest(high, boLookback)[1]
-breakdown = close < ta.lowest(low,  boLookback)[1]
+breakout  = close >= ta.highest(high, boLookback)[1]
+breakdown = close <= ta.lowest(low,  boLookback)[1]
 
 // Extensions
 extBull = upAlign and atrx >= 7
@@ -49,9 +49,9 @@ extBear = downAlign and atrx <= -7
 // Transitional proxies
 basing   = math.abs(close - sma50) <= basingBandATR*atr and maSpread <= maCompressionATR*atr
 meanRev  = not upAlign and not downAlign and not basing and close >= ema20 and ema10 >= ema20
-fadeA    = not extBull and close >= sma50 and ((upAlign and (close < ema10 or not ema10Up)) or (ema10 >= ema20 and close < ema10))
-exhA     = exhBull and close >= sma50 and ((upAlign and (close < ema10 or not ema10Up)) or (ema10 >= ema20 and close < ema10))
-fadeB    = not extBear and close >= sma50 and ema10 < ema20
+fadeA    = not extBull and close >= sma50 and ((upAlign and (close <= ema10 or not ema10Up)) or (ema10 >= ema20 and close <= ema10))
+exhA     = exhBull and close >= sma50 and ((upAlign and (close <= ema10 or not ema10Up)) or (ema10 >= ema20 and close <= ema10))
+fadeB    = not extBear and close >= sma50 and ema10 <= ema20
 
 // === Stage selection ===
 ST_1A = 1
@@ -141,53 +141,53 @@ color cNA  = color.rgb(160, 160, 160)
 color cNAd = color.rgb(160, 160, 160, 50) 
 // Neutral bars (rare ties) = gray
 
-stageColor = if stage==ST_1A and close > close[1]
+stageColor = if stage==ST_1A and close >= close[1]
     c1A
-else  if stage==ST_1A and close < close[1]
+else  if stage==ST_1A and close <= close[1]
     c1Ad
-else if stage==ST_1B and close > close[1]
+else if stage==ST_1B and close >= close[1]
     c1B
-else if stage==ST_1B and close < close[1]
+else if stage==ST_1B and close <= close[1]
     c1Bd
-else if stage==ST_2A and close > close[1]
+else if stage==ST_2A and close >= close[1]
     c2A
-else if stage==ST_2A and close < close[1]
+else if stage==ST_2A and close <= close[1]
     c2Ad
-else if stage==ST_2B and close > close[1]
+else if stage==ST_2B and close >= close[1]
     c2B
-else if stage==ST_2B and close < close[1]
+else if stage==ST_2B and close <= close[1]
     c2Bd
-else if stage==ST_2C and close > close[1]
+else if stage==ST_2C and close >= close[1]
     c2C
-else if stage==ST_2C and close < close[1]
+else if stage==ST_2C and close <= close[1]
     c2Cd
-else if stage==ST_2D and close > close[1]
+else if stage==ST_2D and close >= close[1]
     c2D
-else if stage==ST_2D and close < close[1]
+else if stage==ST_2D and close <= close[1]
     c2Dd
-else if stage==ST_3A and close > close[1]
+else if stage==ST_3A and close >= close[1]
     c3A
-else if stage==ST_3A and close < close[1]
+else if stage==ST_3A and close <= close[1]
     c3Ad
-else if stage==ST_3B and close > close[1]
+else if stage==ST_3B and close >= close[1]
     c3B
-else if stage==ST_3B and close < close[1]
+else if stage==ST_3B and close <= close[1]
     c3Bd
-else if stage==ST_4A and close > close[1]
+else if stage==ST_4A and close >= close[1]
     c4A
-else if stage==ST_4A and close < close[1]
+else if stage==ST_4A and close <= close[1]
     c4Ad
-else if stage==ST_4B and close > close[1]
+else if stage==ST_4B and close >= close[1]
     c4B
-else if stage==ST_4B and close < close[1]
+else if stage==ST_4B and close <= close[1]
     c4Bd
-else if stage==ST_4C and close > close[1]
+else if stage==ST_4C and close >= close[1]
     c4C
-else if stage==ST_4C and close < close[1]
+else if stage==ST_4C and close <= close[1]
     c4Cd
-else if stage==ST_NA  and close > close[1]
+else if stage==ST_NA  and close >= close[1]
     cNA
-else if stage==ST_NA  and close < close[1]
+else if stage==ST_NA  and close <= close[1]
     cNAd
 
 // Optional: expose text label (toggle in settings)
