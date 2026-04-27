@@ -1,1 +1,84 @@
+//@version=6
+// This indicator is based on the Relative Rotation Graph. Apply it to the TradingView chart.
+// Collect the data and update excel sheet "RRR.xlsx" accordinly.
+// To add new curve to the graph on the excel sheet, you need to create RS ratio and RS momentum columns for that ticker.
+//Then, right click on the graph and choose "Select Data". Under "Legend Entries (Series)" select "Add".
+// "Series name" should be the ticker. "Series X values" should be the RS ratio column. "Series Y values" should be the RS momentum column. 
 
+indicator("Relative Robustness Rotation", shorttitle="RRR", precision=2)
+
+// Inputs
+refSymbol = input.symbol("SPY", "Reference Symbol")
+rsLen = input.int(10, "RS smoothing length", minval=2)
+ratioNormLen = input.int(21, "RS-Ratio normalization length", minval=5)
+momLen = input.int(4, "RS-Momentum fast length", minval=2)
+momNormLen = input.int(10, "RS-Momentum normalization length", minval=3)
+showRawRS = input.bool(false, "Show raw relative strength")
+showTable = input.bool(true, "Show state table")
+
+OptionsTableSize = input.string('Small', title='Table Size   ', options=['Tiny', 'Small', 'Normal', 'Large'], group='Table Settings', inline='5')
+
+tableSize = switch OptionsTableSize
+    'Normal' => size.normal
+    'Tiny'   => size.tiny
+    'Small'  => size.small
+    'Large'  => size.large
+
+// Benchmark close
+refClose = request.security(refSymbol, timeframe.period, close)
+
+// Relative strength line
+rsLine = 100 * close / refClose
+
+// Approximate RS-Ratio
+rsSmooth = ta.ema(rsLine, rsLen)
+rsBase = ta.ema(rsSmooth, ratioNormLen)
+rsRatio = rsBase != 0 ? 100 * rsSmooth / rsBase : na
+
+// Approximate RS-Momentum
+momFast = ta.ema(rsRatio, momLen)
+momBase = ta.ema(momFast, momNormLen)
+rsMomentum = momBase != 0 ? 100 * momFast / momBase : na
+
+// Quadrant state
+leadingColor = color.new(color.green, 0)
+improvingColor = color.new(color.blue, 0)
+laggingColor = color.new(color.red, 0)
+weakeningColor = color.new(color.orange, 0)
+
+stateColor = na(rsRatio) or na(rsMomentum) ? color.gray : rsRatio >= 100 and rsMomentum >= 100 ? leadingColor : rsRatio < 100 and rsMomentum >= 100 ? improvingColor : rsRatio < 100 and rsMomentum < 100 ? laggingColor : weakeningColor
+stateText = na(rsRatio) or na(rsMomentum) ? "N/A" : rsRatio >= 100 and rsMomentum >= 100 ? "Leading" : rsRatio < 100 and rsMomentum >= 100 ? "Improving" : rsRatio < 100 and rsMomentum < 100 ? "Lagging" : "Weakening"
+
+// Plots
+plot(showRawRS ? rsLine : na, title="Raw Relative Strength", color=color.gray, linewidth=1, display=display.all - display.price_scale - display.status_line)
+plot(rsRatio, title="Approx RS-Ratio", color=color.aqua, linewidth=2)
+plot(rsMomentum, title="Approx RS-Momentum", color=stateColor, linewidth=2)
+
+hline(100, "100 Baseline", color=color.gray, linestyle=hline.style_dotted)
+bgcolor(color.new(stateColor, 92))
+
+// Alerts
+alertcondition(rsRatio > 100 and rsMomentum > 100, "Leading", "Approx RRG state: Leading")
+alertcondition(rsRatio < 100 and rsMomentum > 100, "Improving", "Approx RRG state: Improving")
+alertcondition(rsRatio < 100 and rsMomentum < 100, "Lagging", "Approx RRG state: Lagging")
+alertcondition(rsRatio > 100 and rsMomentum < 100, "Weakening", "Approx RRG state: Weakening")
+alertcondition(ta.crossover(rsRatio, 100), "RS-Ratio crossed above 100", "Approx RS-Ratio crossed above 100")
+alertcondition(ta.crossunder(rsRatio, 100), "RS-Ratio crossed below 100", "Approx RS-Ratio crossed below 100")
+alertcondition(ta.crossover(rsMomentum, 100), "RS-Momentum crossed above 100", "Approx RS-Momentum crossed above 100")
+alertcondition(ta.crossunder(rsMomentum, 100), "RS-Momentum crossed below 100", "Approx RS-Momentum crossed below 100")
+
+// Table
+var table t = table.new(position.top_right, 2, 4, border_width=1)
+
+if barstate.islast
+    if showTable
+        table.cell(t, 0, 0, "RS-Mom. State", text_color=color.white, bgcolor=color.black, text_size=tableSize)
+        table.cell(t, 1, 0, stateText, text_color=color.white, bgcolor=stateColor, text_size=tableSize)
+        table.cell(t, 0, 1, "RS-Momentum", text_color=color.white, bgcolor=color.black, text_size=tableSize)
+        table.cell(t, 1, 1, str.tostring(rsMomentum, "#.00"), text_color=color.white, bgcolor=color.black, text_size=tableSize)
+        table.cell(t, 0, 2, "RS-Ratio", text_color=color.black, bgcolor=color.aqua, text_size=tableSize)
+        table.cell(t, 1, 2, str.tostring(rsRatio, "#.00"), text_color=color.white, bgcolor=color.black, text_size=tableSize)
+        table.cell(t, 0, 3, "Benchmark", text_color=color.white, bgcolor=color.black, text_size=tableSize)
+        table.cell(t, 1, 3, refSymbol, text_color=color.white, bgcolor=color.black, text_size=tableSize)
+    else
+        table.clear(t, 0, 0, 1, 3)
