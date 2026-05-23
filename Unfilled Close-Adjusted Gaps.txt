@@ -1,0 +1,113 @@
+// Inspired by @NickDrendel video: https://www.youtube.com/watch?v=7vH0iWBJVIQ
+//@version=5
+indicator("Unfilled Close-Adjusted Gaps", overlay=true, max_boxes_count=500, max_lines_count=500)
+
+lookbackDays = input.int(80, "Show gaps from last N daily bars", minval=1, maxval=500)
+maxGaps = input.int(100, "Maximum active gaps", minval=1, maxval=500)
+
+showGapUps = input.bool(true, "Show gap-ups")
+showGapDowns = input.bool(true, "Show gap-downs")
+showActiveBoundaryLine = input.bool(true, "Show adjusted active boundary line")
+
+gapUpColor = input.color(color.new(color.green, 84), "Gap-up box color")
+gapUpBorder = input.color(color.new(color.green, 20), "Gap-up border color")
+gapDownColor = input.color(color.new(color.red, 84), "Gap-down box color")
+gapDownBorder = input.color(color.new(color.red, 20), "Gap-down border color")
+activeLineColor = input.color(color.yellow, "Adjusted boundary line color")
+
+prevClose = close[1]
+
+newGapUp = showGapUps and not na(prevClose) and low > prevClose
+newGapDown = showGapDowns and not na(prevClose) and high < prevClose
+
+var box[] gapBoxes = array.new_box()
+var line[] gapLines = array.new_line()
+var float[] gapOriginalLowers = array.new_float()
+var float[] gapOriginalUppers = array.new_float()
+var float[] gapActiveLowers = array.new_float()
+var float[] gapActiveUppers = array.new_float()
+var int[] gapStartBars = array.new_int()
+var int[] gapDirections = array.new_int()
+
+f_delete_gap(int idx) =>
+    bx = array.get(gapBoxes, idx)
+    ln = array.get(gapLines, idx)
+    box.delete(bx)
+    line.delete(ln)
+    array.remove(gapBoxes, idx)
+    array.remove(gapLines, idx)
+    array.remove(gapOriginalLowers, idx)
+    array.remove(gapOriginalUppers, idx)
+    array.remove(gapActiveLowers, idx)
+    array.remove(gapActiveUppers, idx)
+    array.remove(gapStartBars, idx)
+    array.remove(gapDirections, idx)
+
+f_add_gap(float originalLower, float originalUpper, int direction) =>
+    isGapUp = direction == 1
+    bxColor = isGapUp ? gapUpColor : gapDownColor
+    borderColor = isGapUp ? gapUpBorder : gapDownBorder
+    activeBoundary = isGapUp ? originalUpper : originalLower
+    bx = box.new(left=bar_index - 1, top=originalUpper, right=bar_index, bottom=originalLower, xloc=xloc.bar_index, extend=extend.right, bgcolor=bxColor, border_color=borderColor)
+    ln = line.new(x1=bar_index - 1, y1=activeBoundary, x2=bar_index, y2=activeBoundary, xloc=xloc.bar_index, extend=extend.right, color=showActiveBoundaryLine ? activeLineColor : color.new(activeLineColor, 100), style=line.style_dotted, width=1)
+    array.push(gapBoxes, bx)
+    array.push(gapLines, ln)
+    array.push(gapOriginalLowers, originalLower)
+    array.push(gapOriginalUppers, originalUpper)
+    array.push(gapActiveLowers, originalLower)
+    array.push(gapActiveUppers, originalUpper)
+    array.push(gapStartBars, bar_index)
+    array.push(gapDirections, direction)
+
+if newGapUp
+    f_add_gap(prevClose, low, 1)
+
+if newGapDown
+    f_add_gap(high, prevClose, -1)
+
+int i = array.size(gapBoxes) - 1
+
+while i >= 0
+    bx = array.get(gapBoxes, i)
+    ln = array.get(gapLines, i)
+
+    originalLower = array.get(gapOriginalLowers, i)
+    originalUpper = array.get(gapOriginalUppers, i)
+    activeLower = array.get(gapActiveLowers, i)
+    activeUpper = array.get(gapActiveUppers, i)
+    startBar = array.get(gapStartBars, i)
+    direction = array.get(gapDirections, i)
+
+    isFutureBar = bar_index > startBar
+    tooOld = bar_index - startBar > lookbackDays
+
+    gapUpRemovedByClose = direction == 1 and isFutureBar and close < originalLower
+    gapDownRemovedByClose = direction == -1 and isFutureBar and close > originalUpper
+    removeGap = tooOld or gapUpRemovedByClose or gapDownRemovedByClose
+
+    if removeGap
+        f_delete_gap(i)
+    else
+        closeInsideOriginalGap = isFutureBar and close > originalLower and close < originalUpper
+
+        if direction == 1 and closeInsideOriginalGap and close < activeUpper
+            activeUpper := close
+            array.set(gapActiveUppers, i, activeUpper)
+            box.set_top(bx, activeUpper)
+            line.set_y1(ln, activeUpper)
+            line.set_y2(ln, activeUpper)
+
+        if direction == -1 and closeInsideOriginalGap and close > activeLower
+            activeLower := close
+            array.set(gapActiveLowers, i, activeLower)
+            box.set_bottom(bx, activeLower)
+            line.set_y1(ln, activeLower)
+            line.set_y2(ln, activeLower)
+
+    i -= 1
+
+while array.size(gapBoxes) > maxGaps
+    f_delete_gap(0)
+
+alertcondition(newGapUp, "New Gap-Up", "New bullish daily gap-up detected.")
+alertcondition(newGapDown, "New Gap-Down", "New bearish daily gap-down detected.")
