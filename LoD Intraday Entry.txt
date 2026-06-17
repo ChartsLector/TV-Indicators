@@ -6,7 +6,7 @@ symtick = syminfo.tickerid
 len = input(50, "Volume MA Length", group="$Vol.")
 vol = request.security(symtick, "D", volume)
 ma  = request.security(symtick, "D", ta.sma(vol, len))
-relVol = (100*vol) / ma
+relVol = (100 * vol) / ma
 capital = input.float(title="Total Capital $", defval=100000, minval=1, group="ATR")
 riskTolerance = input.float(title="Risk Tolerance %", defval=2, minval=0.1, maxval=10, step=0.1, group="ATR")
 ATRfraction = input.float(title="Percentage of ATR below the LoD", defval=0.33, minval=0.01, maxval=1, step=0.01, group="ATR")
