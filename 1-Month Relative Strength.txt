@@ -1,6 +1,7 @@
 // inspired by @jfsrev https://x.com/jfsrev/status/1806709652975141131
 // and by @yang927 https://x.com/jfsrev/status/1900509842344980773
 // https://x.com/yang927/status/1812687265404952914
+// Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 //@version=5
 indicator("1-Month RS", overlay=false)
 
