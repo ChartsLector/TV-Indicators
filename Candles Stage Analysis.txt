@@ -1,5 +1,6 @@
 // Stage definitions are copied from @TradeDudeNYC's indicator (https://www.tradingview.com/v/agQTA0Vq/) & modified later.
 // Latest version updated upon private conversation with @@SugarTrader77
+// Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 //@version=6
 indicator("Candle Stage Analysis", overlay=true, max_labels_count=500, max_lines_count=500)
 
