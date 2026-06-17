@@ -1,4 +1,5 @@
 // Inspired by SteveDJacobs ATR Matrix https://x.com/SteveDJacobs/status/1936015163624206660
+// Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 //@version=5
 indicator("ATR Matrix (SMA50 • ATR x-multiples)", overlay=true, max_labels_count=500)
 
