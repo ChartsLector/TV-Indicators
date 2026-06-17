@@ -1,4 +1,5 @@
-// Modified https://www.tradingview.com/v/Z01tNH1E/ by @BigWaveChartist
+// Modified https://www.tradingview.com/v/Z01tNH1E/ by @BigWaveChartist.
+// For intraday time frames, the *correct* RVol value takes 10-20 seconds to be shown.
 // Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 //@version=5
 indicator("LoD Intraday Entry", overlay=true)
