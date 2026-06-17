@@ -3,6 +3,7 @@
 // but the “sigma” zones should be treated as model-based standardized landmarks, not "guaranteed" empirical probabilities or trading signals.
 // Therefore instead of assuming RSI(14) = universal 70/30 behavior, RSI is transformed into logit space;
 // its own rolling distribution is estimated then converted to an empirical z-score. Then the calibrated zones are mapped back onto the usual 0–100 RSI scale.
+// Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 //@version=6
 indicator("Calibrated RSI Position Zones", shorttitle="C-RSI Zones", overlay=false, precision=2, max_labels_count=50)
 
