@@ -1,0 +1,261 @@
+// It's inspired by @AdaptiveRSI article: https://x.com/AdaptiveRSI/status/2066253735332851954
+// The original framework in the article can be seen as Wilder-RSI reinterpretation and adaptive normalization scheme,
+// but the “sigma” zones should be treated as model-based standardized landmarks, not "guaranteed" empirical probabilities or trading signals.
+// Therefore instead of assuming RSI(14) = universal 70/30 behavior, RSI is transformed into logit space;
+// its own rolling distribution is estimated then converted to an empirical z-score. Then the calibrated zones are mapped back onto the usual 0–100 RSI scale.
+//@version=6
+indicator("Calibrated RSI Position Zones", shorttitle="C-RSI Zones", overlay=false, precision=2, max_labels_count=50)
+
+//────────────────────────────────────────────────────────────────────
+// Inputs
+//────────────────────────────────────────────────────────────────────
+src          = input.source(close, "Source")
+rsiLen       = input.int(14, "RSI Length", minval=2)
+calLen       = input.int(252, "Calibration Window", minval=50)
+smoothLen    = input.int(3, "Logit Smoothing", minval=1)
+
+zInner       = input.float(1.00, "Inner Zone z", step=0.10)
+zOuter       = input.float(2.00, "Outer Zone z", step=0.10)
+zExtreme     = input.float(2.75, "Extreme Zone z", step=0.10)
+
+trendLen     = input.int(200, "Trend EMA Length", minval=20)
+trendSlopeN  = input.int(10, "Trend Slope Lookback", minval=1)
+
+atrLen       = input.int(14, "ATR Length", minval=2)
+volRankLen   = input.int(252, "Volatility Rank Window", minval=50)
+
+showSignals  = input.bool(true, "Show Context Signals")
+showTable    = input.bool(true, "Show Regime Table")
+showBg        = input.bool(true, "Shade Extreme Background")
+
+//────────────────────────────────────────────────────────────────────
+// Table controls
+//────────────────────────────────────────────────────────────────────
+tableSizeInput = input.string(
+     "Small",
+     "Table Size",
+     options = ["Tiny", "Small", "Normal", "Large", "Huge"],
+     group = "Table Settings"
+)
+
+tablePosInput = input.string(
+     "Top Right",
+     "Table Position",
+     options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right", "Middle Left"],
+     group = "Table Settings"
+)
+
+metricTextColor = input.color(
+     color.white,
+     "Metric Column Text Color",
+     group = "Table Settings"
+)
+
+//────────────────────────────────────────────────────────────────────
+// Helper functions
+//────────────────────────────────────────────────────────────────────
+f_clamp(x, lo, hi) =>
+    math.min(math.max(x, lo), hi)
+
+f_logit_from_rsi(r) =>
+    p = f_clamp(r / 100.0, 0.001, 0.999)
+    math.log(p / (1.0 - p))
+
+f_rsi_from_logit(x) =>
+    100.0 / (1.0 + math.exp(-x))
+
+//────────────────────────────────────────────────────────────────────
+// Core RSI → logit → empirical z-score
+//────────────────────────────────────────────────────────────────────
+rsiRaw   = ta.rsi(src, rsiLen)
+logitRsi = f_logit_from_rsi(rsiRaw)
+logitSm  = ta.ema(logitRsi, smoothLen)
+
+// Empirical calibration in logit space.
+// This is the mature step: we do not assume the theoretical RSI distribution.
+mu       = ta.ema(logitSm, calLen)
+sigma    = ta.stdev(logitSm, calLen)
+sigmaOK  = sigma > 0.000001 ? sigma : na
+
+z        = (logitSm - mu) / sigmaOK
+zSignal  = ta.ema(z, 3)
+zRank    = ta.percentrank(z, calLen)
+
+// Map empirical z-zones back to RSI scale.
+center   = f_rsi_from_logit(mu)
+
+upper1   = f_rsi_from_logit(mu + zInner   * sigmaOK)
+lower1   = f_rsi_from_logit(mu - zInner   * sigmaOK)
+
+upper2   = f_rsi_from_logit(mu + zOuter   * sigmaOK)
+lower2   = f_rsi_from_logit(mu - zOuter   * sigmaOK)
+
+upper3   = f_rsi_from_logit(mu + zExtreme * sigmaOK)
+lower3   = f_rsi_from_logit(mu - zExtreme * sigmaOK)
+
+//────────────────────────────────────────────────────────────────────
+// Trend and volatility context
+//────────────────────────────────────────────────────────────────────
+trendEma   = ta.ema(src, trendLen)
+trendSlope = trendEma - trendEma[trendSlopeN]
+
+trendState =
+     src > trendEma and trendSlope > 0 ?  1 :
+     src < trendEma and trendSlope < 0 ? -1 : 0
+
+trendText = trendState ==  1 ? "Uptrend" : trendState == -1 ? "Downtrend" : "Range / Transition"
+
+atrPct     = ta.atr(atrLen) / src
+volRank    = ta.percentrank(atrPct, volRankLen)
+
+volText =
+     volRank >= 80 ? "High Volatility" :
+     volRank <= 20 ? "Low Volatility"  :
+                     "Normal Volatility"
+
+//────────────────────────────────────────────────────────────────────
+// Context signals, not automatic buy/sell signals
+//────────────────────────────────────────────────────────────────────
+statOversold   = z < -zOuter
+statOverbought = z >  zOuter
+
+longContext  = showSignals and trendState >= 0 and ta.crossover(z, -zOuter)
+shortContext = showSignals and trendState <= 0 and ta.crossunder(z, zOuter)
+
+extremeHigh = z >  zExtreme
+extremeLow  = z < -zExtreme
+
+//────────────────────────────────────────────────────────────────────
+// Plotting
+//────────────────────────────────────────────────────────────────────
+rsiColor =
+     z >  zExtreme ? color.rgb(180, 0, 0) :
+     z >  zOuter   ? color.red :
+     z >  zInner   ? color.orange :
+     z < -zExtreme ? color.rgb(0, 120, 0) :
+     z < -zOuter   ? color.lime :
+     z < -zInner   ? color.teal :
+                     color.white
+
+pRsi    = plot(rsiRaw, "RSI", color=rsiColor, linewidth=2)
+pCenter = plot(center, "Empirical Center", color=color.yellow, linewidth=2)
+
+pU1 = plot(upper1, "+Inner Zone", color=color.new(color.orange, 25))
+pL1 = plot(lower1, "-Inner Zone", color=color.new(color.teal, 25))
+
+pU2 = plot(upper2, "+Outer Zone", color=color.new(color.red, 10), linewidth=2)
+pL2 = plot(lower2, "-Outer Zone", color=color.new(color.lime, 10), linewidth=2)
+
+pU3 = plot(upper3, "+Extreme Zone", color=color.new(color.red, 45), style=plot.style_linebr)
+pL3 = plot(lower3, "-Extreme Zone", color=color.new(color.lime, 45), style=plot.style_linebr)
+
+fill(pU1, pL1, color=color.new(color.white, 92), title="Central Calibration Zone")
+fill(pU2, pU1, color=color.new(color.red, 92), title="Upper Outer Band")
+fill(pL1, pL2, color=color.new(color.green, 92), title="Lower Outer Band")
+fill(pU3, pU2, color=color.new(color.red, 88), title="Upper Extreme Band")
+fill(pL2, pL3, color=color.new(color.green, 88), title="Lower Extreme Band")
+
+hline(50, "Classical RSI 50", color=color.new(color.white, 70))
+hline(70, "Classical RSI 70", color=color.new(color.red, 80))
+hline(30, "Classical RSI 30", color=color.new(color.green, 80))
+
+plotshape(longContext, title="Long Context Re-entry", style=shape.triangleup,
+     location=location.bottom, color=color.lime, size=size.tiny, text="L")
+
+plotshape(shortContext, title="Short Context Re-entry", style=shape.triangledown,
+     location=location.top, color=color.red, size=size.tiny, text="S")
+
+bgcolor(showBg and extremeHigh ? color.new(color.red, 88) :
+       showBg and extremeLow  ? color.new(color.green, 88) :
+       na)
+
+// Hidden diagnostic plots for data-window inspection.
+plot(z, "Empirical Logit z-score", display=display.data_window)
+plot(zRank, "z Percent Rank", display=display.data_window)
+plot(volRank, "ATR Percent Rank", display=display.data_window)
+
+//────────────────────────────────────────────────────────────────────
+// Alerts
+//────────────────────────────────────────────────────────────────────
+alertcondition(longContext, "Long Context Re-entry",
+     "Q-RSI: RSI re-entered from statistically oversold territory in a non-bearish regime.")
+
+alertcondition(shortContext, "Short Context Re-entry",
+     "Q-RSI: RSI re-entered from statistically overbought territory in a non-bullish regime.")
+
+alertcondition(extremeHigh, "Extreme Positive RSI Displacement",
+     "Q-RSI: RSI is in an empirically extreme positive displacement zone.")
+
+alertcondition(extremeLow, "Extreme Negative RSI Displacement",
+     "Q-RSI: RSI is in an empirically extreme negative displacement zone.")
+
+//────────────────────────────────────────────────────────────────────
+// Regime table
+//────────────────────────────────────────────────────────────────────
+tableTextSize = switch tableSizeInput
+    "Tiny"   => size.tiny
+    "Small"  => size.small
+    "Normal" => size.normal
+    "Large"  => size.large
+    "Huge"   => size.huge
+
+tablePosition = switch tablePosInput
+    "Top Right"    => position.top_right
+    "Top Left"     => position.top_left
+    "Bottom Right" => position.bottom_right
+    "Bottom Left"  => position.bottom_left
+    "Middle Right" => position.middle_right
+    "Middle Left"  => position.middle_left
+
+var table t = table.new(tablePosition, 2, 6, border_width=1)
+
+if showTable and barstate.islast
+    table.cell(t, 0, 0, "Metric",
+         text_color=color.white,
+         bgcolor=color.new(color.black, 0),
+         text_size=tableTextSize)
+
+    table.cell(t, 1, 0, "Value",
+         text_color=color.white,
+         bgcolor=color.new(color.black, 0),
+         text_size=tableTextSize)
+
+    table.cell(t, 0, 1, "Trend",
+         text_color=metricTextColor,
+         text_size=tableTextSize)
+
+    table.cell(t, 1, 1, trendText,
+         text_color = trendState == 1 ? color.lime : trendState == -1 ? color.red : color.orange,
+         text_size=tableTextSize)
+
+    table.cell(t, 0, 2, "Vol Regime",
+         text_color=metricTextColor,
+         text_size=tableTextSize)
+
+    table.cell(t, 1, 2, volText,
+         text_color = volRank >= 80 ? color.red : volRank <= 20 ? color.teal : color.white,
+         text_size=tableTextSize)
+
+    table.cell(t, 0, 3, "RSI",
+         text_color=metricTextColor,
+         text_size=tableTextSize)
+
+    table.cell(t, 1, 3, str.tostring(rsiRaw, "#.##"),
+         text_color=rsiColor,
+         text_size=tableTextSize)
+
+    table.cell(t, 0, 4, "Logit z",
+         text_color=metricTextColor,
+         text_size=tableTextSize)
+
+    table.cell(t, 1, 4, str.tostring(z, "#.##"),
+         text_color = z > zOuter ? color.red : z < -zOuter ? color.lime : color.white,
+         text_size=tableTextSize)
+
+    table.cell(t, 0, 5, "z Percentile",
+         text_color=metricTextColor,
+         text_size=tableTextSize)
+
+    table.cell(t, 1, 5, str.tostring(zRank, "#.##") + "%",
+         text_color=rsiColor,
+         text_size=tableTextSize)
