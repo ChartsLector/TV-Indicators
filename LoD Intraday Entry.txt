@@ -1,4 +1,5 @@
 // Modified https://www.tradingview.com/v/Z01tNH1E/ by @BigWaveChartist
+// Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 //@version=5
 indicator("LoD Intraday Entry", overlay=true)
 
