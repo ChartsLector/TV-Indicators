@@ -1,0 +1,802 @@
+// Based on: @BigWaveChartist https://bigwavechartist.substack.com/p/measuring-market-health 
+// and @JohnMuchow https://x.com/JohnMuchow/article/20336662144 72409492
+// Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
+//@version=6
+indicator("Market Action Pulse & VIX Mood Ring", shorttitle="MAP+VMR", overlay=true)
+
+//──────────────────────────────────────────────────────────────────────────────
+// Shared table inputs
+//──────────────────────────────────────────────────────────────────────────────
+showTable = input.bool(true, "Show combined dashboard table", group="Combined Table")
+
+tablePositionInput = input.string(
+     "Top Right",
+     "Dashboard position",
+     options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Center Right", "Center Left"],
+     group="Combined Table"
+)
+
+tableTextSizeInput = input.string(
+     "Small",
+     "Table text size",
+     options = ["Tiny", "Small", "Normal", "Large", "Huge"],
+     group="Combined Table"
+)
+
+tableTextSize = switch tableTextSizeInput
+    "Tiny"   => size.tiny
+    "Small"  => size.small
+    "Normal" => size.normal
+    "Large"  => size.large
+    "Huge"   => size.huge
+
+tablePos = switch tablePositionInput
+    "Top Left"     => position.top_left
+    "Bottom Right" => position.bottom_right
+    "Bottom Left"  => position.bottom_left
+    "Top Right"    => position.top_right
+    "Center Left"  => position.middle_left
+    => position.middle_right
+
+//──────────────────────────────────────────────────────────────────────────────
+// Market Action Pulse inputs
+//──────────────────────────────────────────────────────────────────────────────
+healthSymbol = input.symbol("NASDAQ:QQQE", "Market-health symbol", tooltip = "QQQE recommended for grwoth stocks", group="Market Action Pulse")
+
+tmhUseConfirmedBars = input.bool(
+     false,
+     "Use completed daily/weekly bars only",
+     tooltip = "ON = avoids live-session repainting by using the previous completed daily/weekly bar.",
+     group="Market Action Pulse"
+)
+
+mccBreadthFeed = input.string(
+     "USI",
+     "McClellan breadth feed",
+     options = ["USI", "Barchart"],
+     tooltip = "USI uses USI:ADVN.NY/USI:DECL.NY and USI:ADVN.NQ/USI:DECL.NQ. Barchart uses ADVN/DECN for NYSE and ADVQ/DECQ for Nasdaq.",
+     group="Market Action Pulse"
+)
+
+mccExchange = input.string(
+     "Nasdaq (NA)",
+     "McClellan exchange",
+     options = ["NYSE (NY)", "Nasdaq (NA)"],
+     tooltip = "NYSE uses ADVN/DECN and displays NYSI/NYMO. Nasdaq uses ADVQ/DECQ and displays NASI/NAMO.",
+     group="Market Action Pulse"
+)
+
+mccTimeframe = input.timeframe(
+     "D",
+     "McClellan timeframe",
+     tooltip = "Use D for the daily NASI/NYSI market-health check.",
+     group="Market Action Pulse"
+)
+
+mccFastLen = input.int(19, "McClellan fast EMA", minval=1, group="Market Action Pulse")
+mccSlowLen = input.int(39, "McClellan slow EMA", minval=2, group="Market Action Pulse")
+msiEmaLen  = input.int(10, "MSI EMA Length", minval=1, group="Market Action Pulse")
+
+oscOverboughtLevel = input.float(
+     100.0,
+     "NAMO/NYMO overbought threshold",
+     tooltip = "Secondary diagnostic only. It does not affect dashboard color.",
+     group="Market Action Pulse"
+)
+
+tmhShowBackground = input.bool(false, "Tint chart background by Trend dashboard color", group="Market Action Pulse")
+
+tmhConfirmOffset = tmhUseConfirmedBars ? 1 : 0
+
+//──────────────────────────────────────────────────────────────────────────────
+// VIX Mood Ring inputs
+//──────────────────────────────────────────────────────────────────────────────
+vixSymbol   = input.symbol("CBOE:VIX",   "VIX symbol", group="VIX Mood Ring")
+vix3mSymbol = input.symbol("CBOE:VIX3M", "VIX3M symbol", group="VIX Mood Ring")
+vvixSymbol  = input.symbol("CBOE:VVIX",  "VVIX symbol", group="VIX Mood Ring")
+skewSymbol  = input.symbol("CBOE:SKEW",  "SKEW symbol", group="VIX Mood Ring")
+
+dataTimeframe = input.timeframe(
+     "D",
+     "Volatility data timeframe",
+     tooltip = "Daily is recommended. The VIX Mood Ring is designed as an end-of-day market-health read.",
+     group="VIX Mood Ring"
+)
+
+vmrUseConfirmedBars = input.bool(
+     true,
+     "Use completed volatility bars only",
+     tooltip = "ON = uses the previous completed volatility bar. This avoids live-session repainting.",
+     group="VIX Mood Ring"
+)
+
+vmrShowBackground = input.bool(false, "Tint chart background by VIX Mood color", group="VIX Mood Ring")
+
+vmrConfirmOffset = vmrUseConfirmedBars ? 1 : 0
+
+//──────────────────────────────────────────────────────────────────────────────
+// Market Action Pulse colors
+//──────────────────────────────────────────────────────────────────────────────
+tmhGreenBg  = color.rgb(0, 130, 0)
+tmhBlueBg   = color.rgb(150, 182, 243)
+tmhYellowBg = color.rgb(220, 190, 0)
+tmhAmberBg  = color.rgb(255, 150, 0)
+tmhOrangeBg = color.rgb(255, 85, 0)
+tmhRedBg    = color.rgb(180, 0, 0)
+tmhGrayBg   = color.rgb(45, 45, 45)
+tmhDarkBg   = color.rgb(25, 25, 25)
+
+//──────────────────────────────────────────────────────────────────────────────
+// VIX Mood Ring colors
+//──────────────────────────────────────────────────────────────────────────────
+vmrGreenBg  = color.rgb(0, 130, 0)
+vmrBlueBg   = color.rgb(80, 135, 220)
+vmrYellowBg = color.rgb(220, 190, 0)
+vmrAmberBg  = color.rgb(255, 150, 0)
+vmrOrangeBg = color.rgb(255, 85, 0)
+vmrRedBg    = color.rgb(180, 0, 0)
+vmrGrayBg   = color.rgb(45, 45, 45)
+vmrDarkBg   = color.rgb(25, 25, 25)
+vmrBlackBg  = color.rgb(10, 10, 10)
+
+//══════════════════════════════════════════════════════════════════════════════
+// Market Action Pulse Logic
+//══════════════════════════════════════════════════════════════════════════════
+
+//──────────────────────────────────────────────────────────────────────────────
+// Daily QQQE/RSP price checks
+//──────────────────────────────────────────────────────────────────────────────
+f_dailyChecks(_offset) =>
+    c     = close[_offset]
+    ema3  = ta.ema(close, 3)[_offset]
+    ema5  = ta.ema(close, 5)[_offset]
+    ema10 = ta.ema(close, 10)[_offset]
+    ema20 = ta.ema(close, 20)[_offset]
+
+    aboveRising5 = c > ema5 and ema5 > ema5[1]
+    dailyBuy     = c > ema10 and c > ema20 and ema10 > ema20
+    breakattempt = c[1] < ema3[1] and ema3[1] < ema5[1] and c > ema5 and ema3 < ema5 and ema5 < ema10
+    strongerbreakattempt = c[1] < c and c > ema5 and ema5 > ema20 and ema20 < ema10
+
+    [c, ema5, ema10, ema20, aboveRising5, dailyBuy, breakattempt, strongerbreakattempt]
+
+[dClose, dSma5, dSma10, dSma20, qqqeAboveRising5, dailyBuySignal, dailyBreakAttempt, dailyStrongerBreakAttempt] =
+     request.security(
+         healthSymbol,
+         "D",
+         f_dailyChecks(tmhConfirmOffset),
+         barmerge.gaps_off,
+         barmerge.lookahead_off
+     )
+
+//──────────────────────────────────────────────────────────────────────────────
+// Weekly QQQE/RSP buy signal
+//──────────────────────────────────────────────────────────────────────────────
+f_weeklyChecks(_offset) =>
+    c     = close[_offset]
+    sma10 = ta.sma(close, 10)[_offset]
+    sma20 = ta.sma(close, 20)[_offset]
+
+    weeklyBuy = c > sma10 and c > sma20 and sma10 > sma20
+
+    [c, sma10, sma20, weeklyBuy]
+
+[wClose, wSma10, wSma20, weeklyBuySignal] =
+     request.security(
+         healthSymbol,
+         "W",
+         f_weeklyChecks(tmhConfirmOffset),
+         barmerge.gaps_off,
+         barmerge.lookahead_off
+     )
+
+//──────────────────────────────────────────────────────────────────────────────
+// McClellan breadth calculation: NASI/NYSI and NAMO/NYMO
+//──────────────────────────────────────────────────────────────────────────────
+isNasdaqMcc = mccExchange == "Nasdaq (NA)"
+
+siLabel = isNasdaqMcc ? "NASI" : "NYSI"
+moLabel = isNasdaqMcc ? "NAMO" : "NYMO"
+
+// Barchart McClellan breadth symbols kept intact.
+nyAdvBarchart = request.security("ADVN", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
+nyDecBarchart = request.security("DECN", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
+
+naAdvBarchart = request.security("ADVQ", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
+naDecBarchart = request.security("DECQ", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
+
+// Added USI breadth symbols.
+nyAdvUsi = request.security("USI:ADVN.NY", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
+nyDecUsi = request.security("USI:DECL.NY", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
+
+naAdvUsi = request.security("USI:ADVN.NQ", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
+naDecUsi = request.security("USI:DECL.NQ", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
+
+useUsiBreadth = mccBreadthFeed == "USI"
+
+nyAdv = useUsiBreadth ? nyAdvUsi : nyAdvBarchart
+nyDec = useUsiBreadth ? nyDecUsi : nyDecBarchart
+
+naAdv = useUsiBreadth ? naAdvUsi : naAdvBarchart
+naDec = useUsiBreadth ? naDecUsi : naDecBarchart
+
+advBreadth = isNasdaqMcc ? naAdv : nyAdv
+decBreadth = isNasdaqMcc ? naDec : nyDec
+
+breadthDenom = advBreadth + decBreadth
+netAdv = not na(breadthDenom) and breadthDenom != 0.0 ? 1000.0 * (advBreadth - decBreadth) / breadthDenom : na
+
+mccCalcBar = timeframe.change(mccTimeframe) or barstate.isfirst
+
+mccAlphaFast = 2.0 / (mccFastLen + 1.0)
+mccAlphaSlow = 2.0 / (mccSlowLen + 1.0)
+msiAlpha     = 2.0 / (msiEmaLen + 1.0)
+
+var float mccEmaFastState       = na
+var float mccEmaSlowState       = na
+var float mccOscState           = na
+var float mccSummationState     = na
+var float mccSummationPrevState = na
+var float mccMsiEmaState        = na
+var float mccMsiEmaPrevState    = na
+
+if mccCalcBar and not na(netAdv)
+    oldSummation = mccSummationState
+    oldMsiEma    = mccMsiEmaState
+
+    mccEmaFastState := na(mccEmaFastState) ? netAdv : mccEmaFastState + mccAlphaFast * (netAdv - mccEmaFastState)
+    mccEmaSlowState := na(mccEmaSlowState) ? netAdv : mccEmaSlowState + mccAlphaSlow * (netAdv - mccEmaSlowState)
+
+    mccOscState := mccEmaFastState - mccEmaSlowState
+
+    mccSummationPrevState := oldSummation
+    mccMsiEmaPrevState    := oldMsiEma
+
+    mccSummationState := na(oldSummation) ? mccOscState : oldSummation + mccOscState
+    mccMsiEmaState    := na(oldMsiEma) ? mccSummationState : oldMsiEma + msiAlpha * (mccSummationState - oldMsiEma)
+
+mccSummation = mccSummationState
+mccOsc       = mccOscState
+mccMsiEma    = mccMsiEmaState
+
+mccUptrend =
+     not na(mccSummation) and
+     not na(mccMsiEma) and
+     not na(mccMsiEmaPrevState) and
+     mccSummation > mccMsiEma and
+     mccMsiEma > mccMsiEmaPrevState
+
+mccAttempt =
+     not mccUptrend and
+     not na(mccSummation) and
+     not na(mccSummationPrevState) and
+     mccSummation > mccSummationPrevState and
+     mccOsc > 0
+
+mccOscOk = not na(mccOsc) and mccOsc < oscOverboughtLevel
+
+//──────────────────────────────────────────────────────────────────────────────
+// Dashboard color logic — gaining traction removed
+//──────────────────────────────────────────────────────────────────────────────
+allOtherPrimaryYes = qqqeAboveRising5 and dailyBuySignal and weeklyBuySignal
+anyOtherPrimaryYes = qqqeAboveRising5 or dailyBuySignal or weeklyBuySignal
+breakingDownTrend = dailyBreakAttempt and weeklyBuySignal
+crushingDownTrend = dailyStrongerBreakAttempt and weeklyBuySignal
+
+tmhDashboardState =
+     mccUptrend and allOtherPrimaryYes                        ? "GREEN"  :
+     mccOscOk and (breakingDownTrend or crushingDownTrend)    ? "BLUE"   :
+     mccUptrend and not allOtherPrimaryYes                    ? "YELLOW" :
+     mccAttempt and anyOtherPrimaryYes                        ? "AMBER"  :
+     not mccUptrend and not mccAttempt and anyOtherPrimaryYes ? "ORANGE" :
+     "RED"
+
+tmhDashboardColor = switch tmhDashboardState
+    "GREEN"  => tmhGreenBg
+    "BLUE"   => tmhBlueBg
+    "YELLOW" => tmhYellowBg
+    "AMBER"  => tmhAmberBg
+    "ORANGE" => tmhOrangeBg
+    => tmhRedBg
+
+tmhDashboardScore = switch tmhDashboardState
+    "GREEN"  => 5
+    "BLUE"   => 4
+    "YELLOW" => 3
+    "AMBER"  => 2
+    "ORANGE" => 1
+    => 0
+
+//──────────────────────────────────────────────────────────────────────────────
+// Exposure rules
+//──────────────────────────────────────────────────────────────────────────────
+f_exposureRule(_state, _prevState) =>
+    string rule = ""
+
+    if _state == "GREEN"
+        rule := "Build toward full exposure progressively."
+    else if _state == "BLUE" and (_prevState == "Orange" or _prevState == "Yellow")
+        rule := "Risky→Blue: build up to ~60%; add more if de-risked."
+    else if _state == "BLUE" and not (_prevState == "Orange" or _prevState == "Yellow")
+        rule := "Blue: add more if positions gain traction."
+    else if _state == "YELLOW" and _prevState == "GREEN"
+        rule := "Green→Yellow: raise stops, trim heat, protect gains."
+    else if _state == "YELLOW"
+        rule := "From cash→Yellow: build up to ~30%; add more if de-risked."
+    else if _state == "AMBER"
+        rule := "Test only 1–2 trades; add more if de-risked."
+    else if _state == "ORANGE"
+        rule := "No new trades; reduce open heat and protect gains."
+    else
+        rule := "Exit longs / stay cash; tactical shorts allowed with hard stops."
+
+    rule
+
+exposureRule = f_exposureRule(tmhDashboardState, tmhDashboardState[1])
+
+//──────────────────────────────────────────────────────────────────────────────
+// Trend display helpers
+//──────────────────────────────────────────────────────────────────────────────
+f_yesNo(_condition) =>
+    _condition ? "YES" : "NO"
+
+f_yesNoColor(_condition) =>
+    _condition ? tmhGreenBg : tmhRedBg
+
+mccStatus = mccUptrend ? "YES" : mccAttempt ? "ATTEMPT" : "NO"
+mccColor  = mccUptrend ? tmhGreenBg : mccAttempt ? tmhAmberBg : tmhRedBg
+
+tmhTxtOnState = tmhDashboardState == "YELLOW" ? color.black : color.white
+
+//══════════════════════════════════════════════════════════════════════════════
+// VIX MOOD RING LOGIC
+//══════════════════════════════════════════════════════════════════════════════
+
+//──────────────────────────────────────────────────────────────────────────────
+// Data
+//──────────────────────────────────────────────────────────────────────────────
+vix = request.security(
+     vixSymbol,
+     dataTimeframe,
+     close[vmrConfirmOffset],
+     barmerge.gaps_off,
+     barmerge.lookahead_off
+)
+
+vix3m = request.security(
+     vix3mSymbol,
+     dataTimeframe,
+     close[vmrConfirmOffset],
+     barmerge.gaps_off,
+     barmerge.lookahead_off
+)
+
+vvix = request.security(
+     vvixSymbol,
+     dataTimeframe,
+     close[vmrConfirmOffset],
+     barmerge.gaps_off,
+     barmerge.lookahead_off
+)
+
+skew = request.security(
+     skewSymbol,
+     dataTimeframe,
+     close[vmrConfirmOffset],
+     barmerge.gaps_off,
+     barmerge.lookahead_off
+)
+
+termRatio = not na(vix) and not na(vix3m) and vix3m != 0.0 ? vix / vix3m : na
+
+//──────────────────────────────────────────────────────────────────────────────
+// Helpers
+//──────────────────────────────────────────────────────────────────────────────
+f_clamp100(_x) =>
+    math.max(0.0, math.min(100.0, _x))
+
+f_scoreVix(_x) =>
+    float s = na
+
+    if not na(_x)
+        if _x < 13.0
+            s := 100.0
+        else if _x < 17.0
+            s := 100.0 - (_x - 13.0) * 15.0 / 4.0
+        else if _x < 20.0
+            s := 85.0 - (_x - 17.0) * 15.0 / 3.0
+        else if _x < 25.0
+            s := 70.0 - (_x - 20.0) * 10.0 / 5.0
+        else if _x < 32.0
+            s := 60.0 - (_x - 25.0) * 40.0 / 7.0
+        else
+            s := 20.0 - math.min(20.0, (_x - 32.0) * 2.5)
+
+    na(s) ? na : f_clamp100(s)
+
+f_scoreTerm(_r) =>
+    float s = na
+
+    if not na(_r)
+        if _r < 0.85
+            s := 80.0 + math.min(20.0, (0.85 - _r) * 100.0)
+        else if _r < 0.95
+            s := 80.0 - (_r - 0.85) * 22.0 / 0.10
+        else if _r < 1.00
+            s := 58.0 - (_r - 0.95) * 28.0 / 0.05
+        else
+            s := 30.0 - math.min(30.0, (_r - 1.00) * 300.0)
+
+    na(s) ? na : f_clamp100(s)
+
+f_scoreVvix(_x) =>
+    float s = na
+
+    if not na(_x)
+        if _x < 85.0
+            s := 100.0
+        else if _x < 100.0
+            s := 90.0 - (_x - 85.0) * 20.0 / 15.0
+        else if _x < 115.0
+            s := 70.0 - (_x - 100.0) * 15.0 / 15.0
+        else if _x < 130.0
+            s := 55.0 - (_x - 115.0) * 20.0 / 15.0
+        else
+            s := 35.0 - math.min(35.0, (_x - 130.0) * 2.0)
+
+    na(s) ? na : f_clamp100(s)
+
+f_scoreSkew(_x) =>
+    float s = na
+
+    if not na(_x)
+        if _x < 115.0
+            s := 100.0
+        else if _x < 130.0
+            s := 82.0 - (_x - 115.0) * 16.0 / 15.0
+        else if _x < 145.0
+            s := 66.0 - (_x - 130.0) * 25.0 / 15.0
+        else
+            s := 41.0 - math.min(41.0, (_x - 145.0) * 2.0)
+
+    na(s) ? na : f_clamp100(s)
+
+//──────────────────────────────────────────────────────────────────────────────
+// Component scores and composite
+//──────────────────────────────────────────────────────────────────────────────
+vixScore  = f_scoreVix(vix)
+termScore = f_scoreTerm(termRatio)
+vvixScore = f_scoreVvix(vvix)
+skewScore = f_scoreSkew(skew)
+
+haveAllScores =
+     not na(vixScore) and
+     not na(termScore) and
+     not na(vvixScore) and
+     not na(skewScore)
+
+compositeScore = haveAllScores ?
+     vixScore  * 0.35 +
+     termScore * 0.25 +
+     skewScore * 0.25 +
+     vvixScore * 0.15 :
+     na
+
+//──────────────────────────────────────────────────────────────────────────────
+// Regime labels
+//──────────────────────────────────────────────────────────────────────────────
+f_vixRegime(_x) =>
+    string r = "N/A"
+
+    if not na(_x)
+        r := _x < 13.0 ? "Ultra Calm" :
+             _x < 17.0 ? "Calm" :
+             _x < 20.0 ? "Elevated" :
+             _x < 25.0 ? "High" :
+             _x < 32.0 ? "Fear" :
+             "Panic"
+
+    r
+
+f_termRegime(_r) =>
+    string r = "N/A"
+
+    if not na(_r)
+        r := _r < 0.85 ? "Deep Contango" :
+             _r < 0.95 ? "Normal" :
+             _r < 1.00 ? "Flattening" :
+             "Backwardation"
+
+    r
+
+f_vvixRegime(_x) =>
+    string r = "N/A"
+
+    if not na(_x)
+        r := _x < 85.0 ? "Stable" :
+             _x < 100.0 ? "Normal" :
+             _x < 115.0 ? "Elevated" :
+             _x < 130.0 ? "High" :
+             "Extreme"
+
+    r
+
+f_skewRegime(_x) =>
+    string r = "N/A"
+
+    if not na(_x)
+        r := _x < 115.0 ? "Low Tail Risk" :
+             _x < 130.0 ? "Normal" :
+             _x < 145.0 ? "Elevated" :
+             "High Tail Risk"
+
+    r
+
+//──────────────────────────────────────────────────────────────────────────────
+// Dashboard state
+//──────────────────────────────────────────────────────────────────────────────
+vmrDashboardState =
+     na(compositeScore)       ? "N/A"    :
+     compositeScore >= 75.0   ? "GREEN"  :
+     compositeScore >= 65.0   ? "BLUE"   :
+     compositeScore >= 55.0   ? "YELLOW" :
+     compositeScore >= 45.0   ? "AMBER"  :
+     compositeScore >= 30.0   ? "ORANGE" :
+     "RED"
+
+moodLabel = switch vmrDashboardState
+    "GREEN"  => "Aggressive"
+    "BLUE"   => "Constructive"
+    "YELLOW" => "Neutral"
+    "AMBER"  => "Caution"
+    "ORANGE" => "Defensive"
+    "RED"    => "Fear"
+    => "N/A"
+
+vmrDashboardColor = switch vmrDashboardState
+    "GREEN"  => vmrGreenBg
+    "BLUE"   => vmrBlueBg
+    "YELLOW" => vmrYellowBg
+    "AMBER"  => vmrAmberBg
+    "ORANGE" => vmrOrangeBg
+    "RED"    => vmrRedBg
+    => vmrGrayBg
+
+vmrTxtOnState = vmrDashboardState == "YELLOW" ? color.black : color.white
+
+dashboardScore = na(compositeScore) ? na : math.round(compositeScore)
+
+//──────────────────────────────────────────────────────────────────────────────
+// Divergence logic
+//──────────────────────────────────────────────────────────────────────────────
+complacencyTrap =
+     not na(vix) and
+     not na(skew) and
+     vix < 17.0 and
+     skew > 140.0
+
+backwardation =
+     not na(termRatio) and
+     termRatio >= 1.0
+
+backwardationResolved =
+     not na(termRatio) and
+     not na(termRatio[1]) and
+     termRatio < 1.0 and
+     termRatio[1] >= 1.0
+
+vvixStillHot =
+     not na(vvix) and
+     vvix >= 115.0
+
+vixFallingButVvixHot =
+     not na(vix) and
+     not na(vix[1]) and
+     vix < vix[1] and
+     vvixStillHot
+
+allClear =
+     not na(vix) and
+     not na(termRatio) and
+     not na(vvix) and
+     not na(skew) and
+     vix < 17.0 and
+     termRatio < 0.95 and
+     vvix < 100.0 and
+     skew < 130.0
+
+divergenceLabel =
+     complacencyTrap       ? "Complacency Trap" :
+     backwardation         ? "Backwardation" :
+     backwardationResolved ? "Panic Easing" :
+     vixFallingButVvixHot  ? "Whipsaw Risk" :
+     allClear              ? "All Clear" :
+     "No Major Divergence"
+
+divergenceText =
+     complacencyTrap       ? "VIX ↓ & SKEW ↑. Breakouts *look* fine \n while crash protection being bought." :
+     backwardation         ? "VIX > VIX3M. Real selloff risk \n until term structure normalizes." :
+     backwardationResolved ? "Term structure moved < 1.0, \n an early sign of easing acute fear." :
+     vixFallingButVvixHot  ? "VIX ↓ & VVIX ↑. Direction is unreliable; \n whipsaw risk remains." :
+     allClear              ? "VIX, term structure, VVIX, \n and SKEW are aligned constructively." :
+     "Signals are mixed, no active \n single high-conviction divergence."
+
+divergenceColor =
+     complacencyTrap or backwardation ? vmrRedBg :
+     vixFallingButVvixHot             ? vmrOrangeBg :
+     backwardationResolved            ? vmrBlueBg :
+     allClear                         ? vmrGreenBg :
+     vmrGrayBg
+
+//──────────────────────────────────────────────────────────────────────────────
+// Playbook rules
+//──────────────────────────────────────────────────────────────────────────────
+f_playbook(_state, _divergence) =>
+    string rule = ""
+
+    if _divergence == "Backwardation"
+        rule := "Cash 1st, avoid forcing breakouts \n till term structure normalizes."
+    else if _divergence == "Complacency Trap"
+        rule := "Tighten stops, avoid adding margin, \n demand only A+ setups."
+    else if _divergence == "Whipsaw Risk"
+        rule := "Keep overnight exposure light, \n prefer intraday entries or smaller starter positions."
+    else if _state == "GREEN"
+        rule := "Growth-stock environment is supportive \n build exposure progressively."
+    else if _state == "BLUE"
+        rule := "Constructive tape, buy quality setups, \n avoid chasing extended names."
+    else if _state == "YELLOW"
+        rule := "Neutral tape, 1/2 positions on new entries; \n wait for follow-through before being aggressive."
+    else if _state == "AMBER"
+        rule := "Caution! Test only the best setups; \n protect open profits."
+    else if _state == "ORANGE"
+        rule := "Defensive posture, \n reduce heat and avoid weak breakouts."
+    else if _state == "RED"
+        rule := "Protect capital, \n build watchlists for the recovery."
+    else
+        rule := "Data unavailable. \n Check volatility symbols."
+
+    rule
+
+playbook = f_playbook(vmrDashboardState, divergenceLabel)
+
+//──────────────────────────────────────────────────────────────────────────────
+// VIX display helpers
+//──────────────────────────────────────────────────────────────────────────────
+f_scoreText(_x) =>
+    na(_x) ? "N/A" : str.tostring(math.round(_x)) + "/100"
+
+f_valueText(_x, _format) =>
+    na(_x) ? "N/A" : str.tostring(_x, _format)
+
+f_scoreColor(_score) =>
+    na(_score) ? vmrGrayBg : _score >= 75.0 ? vmrGreenBg : _score >= 65.0 ? vmrBlueBg : _score >= 55.0 ? vmrYellowBg : _score >= 45.0 ? vmrAmberBg : _score >= 30.0 ? vmrOrangeBg : vmrRedBg
+
+f_textColorForScore(_score) =>
+    not na(_score) and _score >= 55.0 and _score < 65.0 ? color.black : color.white
+
+//──────────────────────────────────────────────────────────────────────────────
+// Visuals / Data window plots
+//──────────────────────────────────────────────────────────────────────────────
+bgcolor(tmhShowBackground ? color.new(tmhDashboardColor, 88) : na)
+bgcolor(vmrShowBackground ? color.new(vmrDashboardColor, 88) : na)
+
+plot(tmhDashboardScore, title="Trend Dashboard State Score", display=display.data_window)
+plot(mccSummation, title="NASI/NYSI", display=display.data_window)
+plot(mccMsiEma, title="NASI/NYSI EMA", display=display.data_window)
+plot(mccOsc, title="NAMO/NYMO", display=display.data_window)
+plot(advBreadth, title="Selected Advancing Issues", display=display.data_window)
+plot(decBreadth, title="Selected Declining Issues", display=display.data_window)
+plot(netAdv, title="Normalized Net Adv-Dec", display=display.data_window)
+
+plot(compositeScore, title="VIX Mood Ring Composite", display=display.data_window)
+plot(vixScore,       title="VIX Score", display=display.data_window)
+plot(termScore,      title="Term Structure Score", display=display.data_window)
+plot(vvixScore,      title="VVIX Score", display=display.data_window)
+plot(skewScore,      title="SKEW Score", display=display.data_window)
+plot(vix,            title="VIX", display=display.data_window)
+plot(vix3m,          title="VIX3M", display=display.data_window)
+plot(termRatio,      title="VIX / VIX3M", display=display.data_window)
+plot(vvix,           title="VVIX", display=display.data_window)
+plot(skew,           title="SKEW", display=display.data_window)
+
+//──────────────────────────────────────────────────────────────────────────────
+// Combined dashboard table
+//──────────────────────────────────────────────────────────────────────────────
+var table dash = table.new(tablePos, 4, 20, border_width=1)
+
+if showTable and barstate.islast
+    // Combined header
+    table.cell(dash, 0, 0, "Combined Dashboard", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 0, "Trend: " + tmhDashboardState, bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 2, 0, "VIX Mood: " + moodLabel, bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 3, 0, "Composite " + (na(dashboardScore) ? "N/A" : str.tostring(dashboardScore) + "/100"), bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+
+    // Trend section
+    table.cell(dash, 0, 1, "Market Pulse", bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 1, 1, tmhDashboardState, bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 2, 1, healthSymbol + " | " + mccExchange + " | " + mccBreadthFeed, bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 3, 1, "Score " + str.tostring(tmhDashboardScore), bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
+
+    table.cell(dash, 0, 2, "Check", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 2, "Status", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 2, "Value", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 2, "Score", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+
+    table.cell(dash, 0, 3, siLabel + " uptrend", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 3, mccStatus, bgcolor=mccColor, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 3, siLabel + " " + str.tostring(mccSummation, "#.##") + "\nEMA " + str.tostring(mccMsiEma, "#.##") + "\n" + moLabel + " " + str.tostring(mccOsc, "#.##") + "\nA/D " + str.tostring(advBreadth, "#.##") + "/" + str.tostring(decBreadth, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 3, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+
+    table.cell(dash, 0, 4, healthSymbol + " above rising 5D EMA", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 4, f_yesNo(qqqeAboveRising5), bgcolor=f_yesNoColor(qqqeAboveRising5), text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 4, "Close " + str.tostring(dClose, "#.##") + "\n5D " + str.tostring(dSma5, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 4, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+
+    table.cell(dash, 0, 5, "Daily buy signal", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 5, f_yesNo(dailyBuySignal), bgcolor=f_yesNoColor(dailyBuySignal), text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 5, "10D " + str.tostring(dSma10, "#.##") + "\n20D " + str.tostring(dSma20, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 5, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+
+    table.cell(dash, 0, 6, "Weekly buy signal", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 6, f_yesNo(weeklyBuySignal), bgcolor=f_yesNoColor(weeklyBuySignal), text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 6, "10W " + str.tostring(wSma10, "#.##") + "\n20W " + str.tostring(wSma20, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 6, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+
+    table.cell(dash, 0, 7, "Secondary: " + moLabel + " not overbought", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 7, f_yesNo(mccOscOk), bgcolor=f_yesNoColor(mccOscOk), text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 7, "Threshold " + str.tostring(oscOverboughtLevel, "#.##"), bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 7, "", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+
+    table.cell(dash, 0, 8, "Exposure rule", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 8, tmhDashboardState, bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 2, 8, exposureRule, bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 8, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+
+    // Separator
+    table.cell(dash, 0, 9, "VIX Mood Ring", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 1, 9, moodLabel, bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 2, 9, "Composite", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 3, 9, na(dashboardScore) ? "N/A" : str.tostring(dashboardScore) + "/100", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+
+    table.cell(dash, 0, 10, "Divergence", bgcolor=divergenceColor, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 10, divergenceLabel, bgcolor=divergenceColor, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 10, divergenceText, bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 10, "", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+
+    table.cell(dash, 0, 11, "Playbook", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 1, 11, moodLabel, bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 2, 11, playbook, bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 11, "", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+
+    table.cell(dash, 0, 12, "Signal", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 12, "Regime", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 12, "Value", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 12, "Score", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+
+    table.cell(dash, 0, 13, "VIX Level", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 13, f_vixRegime(vix), bgcolor=f_scoreColor(vixScore), text_color=f_textColorForScore(vixScore), text_size=tableTextSize)
+    table.cell(dash, 2, 13, f_valueText(vix, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 13, f_scoreText(vixScore), bgcolor=f_scoreColor(vixScore), text_color=f_textColorForScore(vixScore), text_size=tableTextSize)
+
+    table.cell(dash, 0, 14, "Term Structure", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 14, f_termRegime(termRatio), bgcolor=f_scoreColor(termScore), text_color=f_textColorForScore(termScore), text_size=tableTextSize)
+    table.cell(dash, 2, 14, "VIX/VIX3M\n" + f_valueText(termRatio, "#.###"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 14, f_scoreText(termScore), bgcolor=f_scoreColor(termScore), text_color=f_textColorForScore(termScore), text_size=tableTextSize)
+
+    table.cell(dash, 0, 15, "VVIX", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 15, f_vvixRegime(vvix), bgcolor=f_scoreColor(vvixScore), text_color=f_textColorForScore(vvixScore), text_size=tableTextSize)
+    table.cell(dash, 2, 15, f_valueText(vvix, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 15, f_scoreText(vvixScore), bgcolor=f_scoreColor(vvixScore), text_color=f_textColorForScore(vvixScore), text_size=tableTextSize)
+
+    table.cell(dash, 0, 16, "SKEW", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 16, f_skewRegime(skew), bgcolor=f_scoreColor(skewScore), text_color=f_textColorForScore(skewScore), text_size=tableTextSize)
+    table.cell(dash, 2, 16, f_valueText(skew, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 16, f_scoreText(skewScore), bgcolor=f_scoreColor(skewScore), text_color=f_textColorForScore(skewScore), text_size=tableTextSize)
+
+    table.cell(dash, 0, 17, "Weights", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 17, "VIX 35%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 17, "Term 25% / SKEW 25%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 17, "VVIX 15%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+
+if not showTable and barstate.islast
+    table.clear(dash, 0, 0, 3, 19)
