@@ -41,7 +41,7 @@ tablePos = switch tablePositionInput
 //──────────────────────────────────────────────────────────────────────────────
 // Market Action Pulse inputs
 //──────────────────────────────────────────────────────────────────────────────
-healthSymbol = input.symbol("NASDAQ:QQQE", "Market-health symbol", tooltip = "QQQE recommended for grwoth stocks", group="Market Action Pulse")
+healthSymbol = input.symbol("NASDAQ:QQQE", "Market-health symbol", tooltip = "QQQE recommended for growth stocks", group="Market Action Pulse")
 
 tmhUseConfirmedBars = input.bool(
      false,
