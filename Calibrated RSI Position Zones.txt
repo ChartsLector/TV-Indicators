@@ -12,7 +12,7 @@ indicator("Calibrated RSI Position Zones", shorttitle="C-RSI Zones", overlay=fal
 //────────────────────────────────────────────────────────────────────
 src          = input.source(close, "Source")
 rsiLen       = input.int(14, "RSI Length", minval=2)
-calLen       = input.int(252, "Calibration Window", minval=50)
+calLen       = input.int(252, "Calibration Window", minval=10)
 smoothLen    = input.int(3, "Logit Smoothing", minval=1)
 
 zInner       = input.float(1.00, "Inner Zone z", step=0.10)
