@@ -1,7 +1,7 @@
-// By @Oratnek_ill https://www.tradingview.com/v/JSu8Nmb4/
-// Relative Volume is added with sort option
+// By @oratnek_ill https://www.tradingview.com/v/JSu8Nmb4/
+// Relative Volume is added with sort option, RVol values are colored based on today's close ≥ or < yesterday's close.
 //@version=6
-indicator(title = 'Relative Strength & Relative Volume Table', shorttitle = 'RS+RVol Table', overlay = false, dynamic_requests = true)
+indicator(title = 'Relative Strength Table', shorttitle = 'RS Table', overlay = false, dynamic_requests = true)
 
 // ====================== 1. Inputs ======================
 
@@ -39,6 +39,8 @@ show_rs_avg = input.bool(false, title = 'Show Average RS Column', group = group_
 group_volume = 'Volume Settings'
 show_rel_vol = input.bool(true, title = 'Show Relative Volume Column', group = group_volume, tooltip = "Shows RVOL = today's Daily volume / 50-day simple moving average of Daily volume.")
 rel_vol_len = input.int(50, title = 'Relative Volume SMA Length', minval = 2, group = group_volume)
+rvol_up_color = input.color(color.new(#089981, 0), 'RVOL Up Color', group = group_volume, tooltip = 'RVOL text color when today close is greater than or equal to yesterday close.')
+rvol_down_color = input.color(color.new(color.red, 0), 'RVOL Down Color', group = group_volume, tooltip = 'RVOL text color when today close is below yesterday close.')
 
 // RVOL is defined on Daily volume. When RVOL is enabled, the table uses Daily data so
 // RS and RVOL can share one request.security() call per ticker and stay under TradingView's 64-request limit.
@@ -126,7 +128,7 @@ group_highlight = 'RS Highlight Settings'
 highlight_mode = input.string('Text', 'Highlight Mode', options=['Background', 'Text'], group = group_highlight, tooltip='Choose whether to highlight the cell background or the text itself.')
 
 // Opacity 100 means Transparency 0
-highlight_strong_color = input.color(color.new(#00ff00, 0), 'Strong RS Color', group = group_highlight, inline = 'H1')
+highlight_strong_color = input.color(color.new(#089981, 0), 'Strong RS Color', group = group_highlight, inline = 'H1')
 highlight_strong_pct = input.float(80.0, 'Strong Threshold (%)', minval = 50, maxval = 99, group = group_highlight, inline = 'H1')
 enable_strong_highlight = input.bool(true, 'Strong Highlight', group = group_highlight, inline = 'H1')
 
@@ -159,6 +161,10 @@ f_get_rs_color_cond(rs_value) =>
             color_to_use := highlight_neutral_color
     color_to_use
 
+// Helper: RVOL text color based on same-symbol daily close direction
+f_get_rvol_text_color(_up_flag) =>
+    na(_up_flag) ? text_color : (_up_flag >= 1.0 ? rvol_up_color : rvol_down_color)
+
 // Helper: securely retrieve RS + RVOL in one ticker request.
 // This avoids the 64 unique request.*() runtime limit when 35 tickers are enabled.
 // RS is still calculated as PercentRank of ticker / benchmark.
@@ -171,10 +177,11 @@ f_get_rs_vol_data(_ticker, _tf, _l1, _l2, _l3, _l4, _vlen) =>
              ta.percentrank(close / _bench_close, _l2),
              ta.percentrank(close / _bench_close, _l3),
              ta.percentrank(close / _bench_close, _l4),
-             100 * volume / ta.sma(volume, _vlen)
+             100 * volume / ta.sma(volume, _vlen),
+             na(close[1]) ? na : (close >= close[1] ? 1.0 : 0.0)
              ], ignore_invalid_symbol=true)
     else
-        [na, na, na, na, na]
+        [na, na, na, na, na, na]
 
 // Helper: Fallback for empty inputs to avoid script errors before filtering
 f_safe_ticker(t) => str.length(t) > 0 ? t : 'SPY' 
@@ -183,82 +190,118 @@ f_safe_ticker(t) => str.length(t) > 0 ? t : 'SPY'
 // Uses current chart ticker vs benchmark
 // FIX: Construct a clean "Exchange:Symbol" string to avoid ADJ syntax errors in spread calculation
 current_clean_ticker = syminfo.prefix + ":" + syminfo.ticker
-[rs_w1_current, rs_m1_current, rs_m3_current, rs_m6_current, rel_vol_current_raw] = f_get_rs_vol_data(current_clean_ticker, calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+[rs_w1_current, rs_m1_current, rs_m3_current, rs_m6_current, rel_vol_current_raw, rel_vol_up_current_raw] = f_get_rs_vol_data(current_clean_ticker, calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_current = show_rel_vol and show_current_chart_ticker ? rel_vol_current_raw : na
+rel_vol_up_current = show_rel_vol and show_current_chart_ticker ? rel_vol_up_current_raw : na
 
 // --- Fetch Data for 35 Tickers (Unrolled calls) ---
 // We pass the "Calculation Timeframe" (calc_tf) to ensure data is pulled from the correct timeframe (e.g. Daily) regardless of chart view.
 
-[rs_w1_1, rs_m1_1, rs_m3_1, rs_m6_1, rel_vol_1_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_1), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+[rs_w1_1, rs_m1_1, rs_m3_1, rs_m6_1, rel_vol_1_raw, rel_vol_up_1_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_1), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_1 = show_rel_vol and is_set_1 ? rel_vol_1_raw : na
-[rs_w1_2, rs_m1_2, rs_m3_2, rs_m6_2, rel_vol_2_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_2), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_1 = show_rel_vol and is_set_1 ? rel_vol_up_1_raw : na
+[rs_w1_2, rs_m1_2, rs_m3_2, rs_m6_2, rel_vol_2_raw, rel_vol_up_2_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_2), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_2 = show_rel_vol and is_set_2 ? rel_vol_2_raw : na
-[rs_w1_3, rs_m1_3, rs_m3_3, rs_m6_3, rel_vol_3_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_3), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_2 = show_rel_vol and is_set_2 ? rel_vol_up_2_raw : na
+[rs_w1_3, rs_m1_3, rs_m3_3, rs_m6_3, rel_vol_3_raw, rel_vol_up_3_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_3), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_3 = show_rel_vol and is_set_3 ? rel_vol_3_raw : na
-[rs_w1_4, rs_m1_4, rs_m3_4, rs_m6_4, rel_vol_4_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_4), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_3 = show_rel_vol and is_set_3 ? rel_vol_up_3_raw : na
+[rs_w1_4, rs_m1_4, rs_m3_4, rs_m6_4, rel_vol_4_raw, rel_vol_up_4_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_4), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_4 = show_rel_vol and is_set_4 ? rel_vol_4_raw : na
-[rs_w1_5, rs_m1_5, rs_m3_5, rs_m6_5, rel_vol_5_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_5), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_4 = show_rel_vol and is_set_4 ? rel_vol_up_4_raw : na
+[rs_w1_5, rs_m1_5, rs_m3_5, rs_m6_5, rel_vol_5_raw, rel_vol_up_5_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_5), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_5 = show_rel_vol and is_set_5 ? rel_vol_5_raw : na
-[rs_w1_6, rs_m1_6, rs_m3_6, rs_m6_6, rel_vol_6_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_6), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_5 = show_rel_vol and is_set_5 ? rel_vol_up_5_raw : na
+[rs_w1_6, rs_m1_6, rs_m3_6, rs_m6_6, rel_vol_6_raw, rel_vol_up_6_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_6), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_6 = show_rel_vol and is_set_6 ? rel_vol_6_raw : na
-[rs_w1_7, rs_m1_7, rs_m3_7, rs_m6_7, rel_vol_7_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_7), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_6 = show_rel_vol and is_set_6 ? rel_vol_up_6_raw : na
+[rs_w1_7, rs_m1_7, rs_m3_7, rs_m6_7, rel_vol_7_raw, rel_vol_up_7_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_7), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_7 = show_rel_vol and is_set_7 ? rel_vol_7_raw : na
-[rs_w1_8, rs_m1_8, rs_m3_8, rs_m6_8, rel_vol_8_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_8), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_7 = show_rel_vol and is_set_7 ? rel_vol_up_7_raw : na
+[rs_w1_8, rs_m1_8, rs_m3_8, rs_m6_8, rel_vol_8_raw, rel_vol_up_8_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_8), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_8 = show_rel_vol and is_set_8 ? rel_vol_8_raw : na
-[rs_w1_9, rs_m1_9, rs_m3_9, rs_m6_9, rel_vol_9_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_9), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_8 = show_rel_vol and is_set_8 ? rel_vol_up_8_raw : na
+[rs_w1_9, rs_m1_9, rs_m3_9, rs_m6_9, rel_vol_9_raw, rel_vol_up_9_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_9), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_9 = show_rel_vol and is_set_9 ? rel_vol_9_raw : na
-[rs_w1_10, rs_m1_10, rs_m3_10, rs_m6_10, rel_vol_10_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_10), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_9 = show_rel_vol and is_set_9 ? rel_vol_up_9_raw : na
+[rs_w1_10, rs_m1_10, rs_m3_10, rs_m6_10, rel_vol_10_raw, rel_vol_up_10_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_10), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_10 = show_rel_vol and is_set_10 ? rel_vol_10_raw : na
-[rs_w1_11, rs_m1_11, rs_m3_11, rs_m6_11, rel_vol_11_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_11), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_10 = show_rel_vol and is_set_10 ? rel_vol_up_10_raw : na
+[rs_w1_11, rs_m1_11, rs_m3_11, rs_m6_11, rel_vol_11_raw, rel_vol_up_11_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_11), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_11 = show_rel_vol and is_set_11 ? rel_vol_11_raw : na
-[rs_w1_12, rs_m1_12, rs_m3_12, rs_m6_12, rel_vol_12_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_12), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_11 = show_rel_vol and is_set_11 ? rel_vol_up_11_raw : na
+[rs_w1_12, rs_m1_12, rs_m3_12, rs_m6_12, rel_vol_12_raw, rel_vol_up_12_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_12), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_12 = show_rel_vol and is_set_12 ? rel_vol_12_raw : na
-[rs_w1_13, rs_m1_13, rs_m3_13, rs_m6_13, rel_vol_13_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_13), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_12 = show_rel_vol and is_set_12 ? rel_vol_up_12_raw : na
+[rs_w1_13, rs_m1_13, rs_m3_13, rs_m6_13, rel_vol_13_raw, rel_vol_up_13_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_13), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_13 = show_rel_vol and is_set_13 ? rel_vol_13_raw : na
-[rs_w1_14, rs_m1_14, rs_m3_14, rs_m6_14, rel_vol_14_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_14), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_13 = show_rel_vol and is_set_13 ? rel_vol_up_13_raw : na
+[rs_w1_14, rs_m1_14, rs_m3_14, rs_m6_14, rel_vol_14_raw, rel_vol_up_14_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_14), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_14 = show_rel_vol and is_set_14 ? rel_vol_14_raw : na
-[rs_w1_15, rs_m1_15, rs_m3_15, rs_m6_15, rel_vol_15_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_15), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_14 = show_rel_vol and is_set_14 ? rel_vol_up_14_raw : na
+[rs_w1_15, rs_m1_15, rs_m3_15, rs_m6_15, rel_vol_15_raw, rel_vol_up_15_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_15), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_15 = show_rel_vol and is_set_15 ? rel_vol_15_raw : na
-[rs_w1_16, rs_m1_16, rs_m3_16, rs_m6_16, rel_vol_16_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_16), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_15 = show_rel_vol and is_set_15 ? rel_vol_up_15_raw : na
+[rs_w1_16, rs_m1_16, rs_m3_16, rs_m6_16, rel_vol_16_raw, rel_vol_up_16_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_16), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_16 = show_rel_vol and is_set_16 ? rel_vol_16_raw : na
-[rs_w1_17, rs_m1_17, rs_m3_17, rs_m6_17, rel_vol_17_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_17), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_16 = show_rel_vol and is_set_16 ? rel_vol_up_16_raw : na
+[rs_w1_17, rs_m1_17, rs_m3_17, rs_m6_17, rel_vol_17_raw, rel_vol_up_17_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_17), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_17 = show_rel_vol and is_set_17 ? rel_vol_17_raw : na
-[rs_w1_18, rs_m1_18, rs_m3_18, rs_m6_18, rel_vol_18_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_18), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_17 = show_rel_vol and is_set_17 ? rel_vol_up_17_raw : na
+[rs_w1_18, rs_m1_18, rs_m3_18, rs_m6_18, rel_vol_18_raw, rel_vol_up_18_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_18), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_18 = show_rel_vol and is_set_18 ? rel_vol_18_raw : na
-[rs_w1_19, rs_m1_19, rs_m3_19, rs_m6_19, rel_vol_19_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_19), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_18 = show_rel_vol and is_set_18 ? rel_vol_up_18_raw : na
+[rs_w1_19, rs_m1_19, rs_m3_19, rs_m6_19, rel_vol_19_raw, rel_vol_up_19_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_19), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_19 = show_rel_vol and is_set_19 ? rel_vol_19_raw : na
-[rs_w1_20, rs_m1_20, rs_m3_20, rs_m6_20, rel_vol_20_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_20), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_19 = show_rel_vol and is_set_19 ? rel_vol_up_19_raw : na
+[rs_w1_20, rs_m1_20, rs_m3_20, rs_m6_20, rel_vol_20_raw, rel_vol_up_20_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_20), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_20 = show_rel_vol and is_set_20 ? rel_vol_20_raw : na
-[rs_w1_21, rs_m1_21, rs_m3_21, rs_m6_21, rel_vol_21_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_21), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_20 = show_rel_vol and is_set_20 ? rel_vol_up_20_raw : na
+[rs_w1_21, rs_m1_21, rs_m3_21, rs_m6_21, rel_vol_21_raw, rel_vol_up_21_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_21), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_21 = show_rel_vol and is_set_21 ? rel_vol_21_raw : na
-[rs_w1_22, rs_m1_22, rs_m3_22, rs_m6_22, rel_vol_22_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_22), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_21 = show_rel_vol and is_set_21 ? rel_vol_up_21_raw : na
+[rs_w1_22, rs_m1_22, rs_m3_22, rs_m6_22, rel_vol_22_raw, rel_vol_up_22_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_22), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_22 = show_rel_vol and is_set_22 ? rel_vol_22_raw : na
-[rs_w1_23, rs_m1_23, rs_m3_23, rs_m6_23, rel_vol_23_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_23), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_22 = show_rel_vol and is_set_22 ? rel_vol_up_22_raw : na
+[rs_w1_23, rs_m1_23, rs_m3_23, rs_m6_23, rel_vol_23_raw, rel_vol_up_23_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_23), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_23 = show_rel_vol and is_set_23 ? rel_vol_23_raw : na
-[rs_w1_24, rs_m1_24, rs_m3_24, rs_m6_24, rel_vol_24_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_24), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_23 = show_rel_vol and is_set_23 ? rel_vol_up_23_raw : na
+[rs_w1_24, rs_m1_24, rs_m3_24, rs_m6_24, rel_vol_24_raw, rel_vol_up_24_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_24), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_24 = show_rel_vol and is_set_24 ? rel_vol_24_raw : na
-[rs_w1_25, rs_m1_25, rs_m3_25, rs_m6_25, rel_vol_25_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_25), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_24 = show_rel_vol and is_set_24 ? rel_vol_up_24_raw : na
+[rs_w1_25, rs_m1_25, rs_m3_25, rs_m6_25, rel_vol_25_raw, rel_vol_up_25_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_25), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_25 = show_rel_vol and is_set_25 ? rel_vol_25_raw : na
-[rs_w1_26, rs_m1_26, rs_m3_26, rs_m6_26, rel_vol_26_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_26), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_25 = show_rel_vol and is_set_25 ? rel_vol_up_25_raw : na
+[rs_w1_26, rs_m1_26, rs_m3_26, rs_m6_26, rel_vol_26_raw, rel_vol_up_26_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_26), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_26 = show_rel_vol and is_set_26 ? rel_vol_26_raw : na
-[rs_w1_27, rs_m1_27, rs_m3_27, rs_m6_27, rel_vol_27_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_27), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_26 = show_rel_vol and is_set_26 ? rel_vol_up_26_raw : na
+[rs_w1_27, rs_m1_27, rs_m3_27, rs_m6_27, rel_vol_27_raw, rel_vol_up_27_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_27), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_27 = show_rel_vol and is_set_27 ? rel_vol_27_raw : na
-[rs_w1_28, rs_m1_28, rs_m3_28, rs_m6_28, rel_vol_28_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_28), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_27 = show_rel_vol and is_set_27 ? rel_vol_up_27_raw : na
+[rs_w1_28, rs_m1_28, rs_m3_28, rs_m6_28, rel_vol_28_raw, rel_vol_up_28_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_28), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_28 = show_rel_vol and is_set_28 ? rel_vol_28_raw : na
-[rs_w1_29, rs_m1_29, rs_m3_29, rs_m6_29, rel_vol_29_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_29), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_28 = show_rel_vol and is_set_28 ? rel_vol_up_28_raw : na
+[rs_w1_29, rs_m1_29, rs_m3_29, rs_m6_29, rel_vol_29_raw, rel_vol_up_29_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_29), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_29 = show_rel_vol and is_set_29 ? rel_vol_29_raw : na
-[rs_w1_30, rs_m1_30, rs_m3_30, rs_m6_30, rel_vol_30_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_30), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_29 = show_rel_vol and is_set_29 ? rel_vol_up_29_raw : na
+[rs_w1_30, rs_m1_30, rs_m3_30, rs_m6_30, rel_vol_30_raw, rel_vol_up_30_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_30), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_30 = show_rel_vol and is_set_30 ? rel_vol_30_raw : na
-[rs_w1_31, rs_m1_31, rs_m3_31, rs_m6_31, rel_vol_31_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_31), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_30 = show_rel_vol and is_set_30 ? rel_vol_up_30_raw : na
+[rs_w1_31, rs_m1_31, rs_m3_31, rs_m6_31, rel_vol_31_raw, rel_vol_up_31_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_31), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_31 = show_rel_vol and is_set_31 ? rel_vol_31_raw : na
-[rs_w1_32, rs_m1_32, rs_m3_32, rs_m6_32, rel_vol_32_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_32), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_31 = show_rel_vol and is_set_31 ? rel_vol_up_31_raw : na
+[rs_w1_32, rs_m1_32, rs_m3_32, rs_m6_32, rel_vol_32_raw, rel_vol_up_32_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_32), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_32 = show_rel_vol and is_set_32 ? rel_vol_32_raw : na
-[rs_w1_33, rs_m1_33, rs_m3_33, rs_m6_33, rel_vol_33_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_33), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_32 = show_rel_vol and is_set_32 ? rel_vol_up_32_raw : na
+[rs_w1_33, rs_m1_33, rs_m3_33, rs_m6_33, rel_vol_33_raw, rel_vol_up_33_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_33), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_33 = show_rel_vol and is_set_33 ? rel_vol_33_raw : na
-[rs_w1_34, rs_m1_34, rs_m3_34, rs_m6_34, rel_vol_34_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_34), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_33 = show_rel_vol and is_set_33 ? rel_vol_up_33_raw : na
+[rs_w1_34, rs_m1_34, rs_m3_34, rs_m6_34, rel_vol_34_raw, rel_vol_up_34_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_34), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_34 = show_rel_vol and is_set_34 ? rel_vol_34_raw : na
-[rs_w1_35, rs_m1_35, rs_m3_35, rs_m6_35, rel_vol_35_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_35), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_up_34 = show_rel_vol and is_set_34 ? rel_vol_up_34_raw : na
+[rs_w1_35, rs_m1_35, rs_m3_35, rs_m6_35, rel_vol_35_raw, rel_vol_up_35_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_35), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
 rel_vol_35 = show_rel_vol and is_set_35 ? rel_vol_35_raw : na
+rel_vol_up_35 = show_rel_vol and is_set_35 ? rel_vol_up_35_raw : na
 
 // ====================== 3. Data Aggregation and Sorting ======================
 
@@ -270,6 +313,7 @@ var array<float> rs_m3_data = array.new_float()
 var array<float> rs_m6_data = array.new_float()
 var array<float> rs_avg_data = array.new_float()
 var array<float> rel_vol_data = array.new_float()
+var array<float> rel_vol_up_data = array.new_float()
 
 // Table ID
 var table rs_table = na
@@ -343,6 +387,7 @@ if barstate.islast
     array.clear(rs_m6_data)
     array.clear(rs_avg_data)
     array.clear(rel_vol_data)
+    array.clear(rel_vol_up_data)
 
     // Aggregate data from inputs and calculations
     ticker_symbols = array.from(ticker_1, ticker_2, ticker_3, ticker_4, ticker_5, ticker_6, ticker_7, ticker_8, ticker_9, ticker_10, ticker_11, ticker_12, ticker_13, ticker_14, ticker_15, ticker_16, ticker_17, ticker_18, ticker_19, ticker_20, ticker_21, ticker_22, ticker_23, ticker_24, ticker_25, ticker_26, ticker_27, ticker_28, ticker_29, ticker_30, ticker_31, ticker_32, ticker_33, ticker_34, ticker_35)
@@ -353,6 +398,7 @@ if barstate.islast
     rs_m3_values = array.from(rs_m3_1, rs_m3_2, rs_m3_3, rs_m3_4, rs_m3_5, rs_m3_6, rs_m3_7, rs_m3_8, rs_m3_9, rs_m3_10, rs_m3_11, rs_m3_12, rs_m3_13, rs_m3_14, rs_m3_15, rs_m3_16, rs_m3_17, rs_m3_18, rs_m3_19, rs_m3_20, rs_m3_21, rs_m3_22, rs_m3_23, rs_m3_24, rs_m3_25, rs_m3_26, rs_m3_27, rs_m3_28, rs_m3_29, rs_m3_30, rs_m3_31, rs_m3_32, rs_m3_33, rs_m3_34, rs_m3_35)
     rs_m6_values = array.from(rs_m6_1, rs_m6_2, rs_m6_3, rs_m6_4, rs_m6_5, rs_m6_6, rs_m6_7, rs_m6_8, rs_m6_9, rs_m6_10, rs_m6_11, rs_m6_12, rs_m6_13, rs_m6_14, rs_m6_15, rs_m6_16, rs_m6_17, rs_m6_18, rs_m6_19, rs_m6_20, rs_m6_21, rs_m6_22, rs_m6_23, rs_m6_24, rs_m6_25, rs_m6_26, rs_m6_27, rs_m6_28, rs_m6_29, rs_m6_30, rs_m6_31, rs_m6_32, rs_m6_33, rs_m6_34, rs_m6_35)
     rel_vol_values = array.from(rel_vol_1, rel_vol_2, rel_vol_3, rel_vol_4, rel_vol_5, rel_vol_6, rel_vol_7, rel_vol_8, rel_vol_9, rel_vol_10, rel_vol_11, rel_vol_12, rel_vol_13, rel_vol_14, rel_vol_15, rel_vol_16, rel_vol_17, rel_vol_18, rel_vol_19, rel_vol_20, rel_vol_21, rel_vol_22, rel_vol_23, rel_vol_24, rel_vol_25, rel_vol_26, rel_vol_27, rel_vol_28, rel_vol_29, rel_vol_30, rel_vol_31, rel_vol_32, rel_vol_33, rel_vol_34, rel_vol_35)
+    rel_vol_up_values = array.from(rel_vol_up_1, rel_vol_up_2, rel_vol_up_3, rel_vol_up_4, rel_vol_up_5, rel_vol_up_6, rel_vol_up_7, rel_vol_up_8, rel_vol_up_9, rel_vol_up_10, rel_vol_up_11, rel_vol_up_12, rel_vol_up_13, rel_vol_up_14, rel_vol_up_15, rel_vol_up_16, rel_vol_up_17, rel_vol_up_18, rel_vol_up_19, rel_vol_up_20, rel_vol_up_21, rel_vol_up_22, rel_vol_up_23, rel_vol_up_24, rel_vol_up_25, rel_vol_up_26, rel_vol_up_27, rel_vol_up_28, rel_vol_up_29, rel_vol_up_30, rel_vol_up_31, rel_vol_up_32, rel_vol_up_33, rel_vol_up_34, rel_vol_up_35)
 
     // Keep the current chart ticker separate from the sortable ticker-list dataset.
     // It will be displayed as a pinned row/column at the top/left of the table,
@@ -364,6 +410,7 @@ if barstate.islast
         rs_m3_f = array.get(rs_m3_values, i)
         rs_m6_f = array.get(rs_m6_values, i)
         rel_vol_f = array.get(rel_vol_values, i)
+        rel_vol_up_f = array.get(rel_vol_up_values, i)
 
         // Calculate Average RS
         avg_rs = f_calculate_avg_rs(rs_w1_f, rs_m1_f, rs_m3_f, rs_m6_f, show_rs_w1, show_rs_m1, show_rs_m3, show_rs_m6)
@@ -378,6 +425,7 @@ if barstate.islast
             array.push(rs_m6_data, rs_m6_f)
             array.push(rs_avg_data, avg_rs)
             array.push(rel_vol_data, rel_vol_f)
+            array.push(rel_vol_up_data, rel_vol_up_f)
 
     // Execute sorting after the arrays are populated.
     // NA values are replaced with a very low sentinel so invalid/missing RVOL values sort to the bottom.
@@ -505,7 +553,8 @@ if barstate.islast
                 table.cell(rs_table, col, row, rs_avg_str_c, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
                 col := col + 1
             if show_rel_vol
-                table.cell(rs_table, col, row, rel_vol_str_c, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                rvol_txt_c = f_get_rvol_text_color(rel_vol_up_current)
+                table.cell(rs_table, col, row, rel_vol_str_c, text_color = rvol_txt_c, bgcolor = bg_col_final, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
                 col := col + 1
             row := row + 1
 
@@ -520,6 +569,7 @@ if barstate.islast
             rs_m6_f = array.get(rs_m6_data, original_index)
             rs_avg_f = array.get(rs_avg_data, original_index)
             rel_vol_f = array.get(rel_vol_data, original_index)
+            rel_vol_up_f = array.get(rel_vol_up_data, original_index)
 
             rs_w1_str = na(rs_w1_f) ? '-' : str.tostring(rs_w1_f, format_str) + '%'
             rs_m1_str = na(rs_m1_f) ? '-' : str.tostring(rs_m1_f, format_str) + '%'
@@ -563,7 +613,8 @@ if barstate.islast
                 table.cell(rs_table, col, row, rs_avg_str, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
                 col := col + 1
             if show_rel_vol
-                table.cell(rs_table, col, row, rel_vol_str, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                rvol_txt = f_get_rvol_text_color(rel_vol_up_f)
+                table.cell(rs_table, col, row, rel_vol_str, text_color = rvol_txt, bgcolor = bg_col_final, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
                 col := col + 1
             row := row + 1
 
@@ -755,14 +806,17 @@ if barstate.islast
             
             if show_current_pinned
                 val_str = na(rel_vol_current) ? '-' : str.tostring(rel_vol_current, format_str) + '%'
-                table.cell(rs_table, col_idx, row_h, val_str, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_right, text_size = text_size_id)
+                rvol_txt_c = f_get_rvol_text_color(rel_vol_up_current)
+                table.cell(rs_table, col_idx, row_h, val_str, text_color = rvol_txt_c, bgcolor = bg_col_final, text_halign = text.align_right, text_size = text_size_id)
                 col_idx := col_idx + 1
 
             for k = 0 to array.size(sorted_indices) - 1
                 orig_idx = array.get(sorted_indices, k)
                 val = array.get(rel_vol_data, orig_idx)
+                up_flag = array.get(rel_vol_up_data, orig_idx)
                 val_str_s = na(val) ? '-' : str.tostring(val, format_str) + '%'
-                table.cell(rs_table, col_idx, row_h, val_str_s, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_right, text_size = text_size_id)
+                rvol_txt = f_get_rvol_text_color(up_flag)
+                table.cell(rs_table, col_idx, row_h, val_str_s, text_color = rvol_txt, bgcolor = bg_col_final, text_halign = text.align_right, text_size = text_size_id)
                 col_idx := col_idx + 1
             row_h := row_h + 1
 
