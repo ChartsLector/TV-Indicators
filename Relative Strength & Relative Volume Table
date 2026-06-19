@@ -1,0 +1,772 @@
+// By @Oratnek_ill https://www.tradingview.com/v/JSu8Nmb4/
+// Relative Volume is added with sort option
+//@version=6
+indicator(title = 'Relative Strength & Relative Volume Table', shorttitle = 'RS+RVol Table', overlay = false, dynamic_requests = true)
+
+// ====================== 1. Inputs ======================
+
+// --- Relative Strength Benchmark ---
+rs_benchmark = input.symbol('SPY', title = 'RS Benchmark')
+
+// --- Main Table Settings Inputs ---
+sort_key_options = input.string('P2', title = 'Sort By RS Period or RVOL', options = ['P1', 'P2', 'P3', 'P4', 'P Avg', 'P RVol'], group = 'Table Settings', tooltip = 'P1=Period 1 (Short), P2=Period 2 (Medium), P3=Period 3 (Longer), P4=Period 4 (Long), P Avg=Average of visible periods, P RVol=Relative Volume')
+table_orientation = input.string('Vertical', 'Table Orientation', options=['Vertical', 'Horizontal'], group = 'Table Settings', tooltip = 'Vertical = Tickers in rows (standard)\nHorizontal = Tickers in columns')
+table_position = input.string('Left Top', title = 'Table Position', options = ['Left Top', 'Left Center', 'Left Bottom', 'Center Top', 'Center Center', 'Center Bottom', 'Right Top', 'Right Center', 'Right Bottom'], group = 'Table Settings')
+
+// --- Calculation Settings ---
+group_calc = 'Calculation Settings'
+calc_mode = input.string('Daily (Fixed)', 'Calculation Timeframe Mode', options = ['Daily (Fixed)', 'Current Chart'], group = group_calc, tooltip = 'Select whether to fix RS calculation to Daily (D) or use the Current Chart timeframe.')
+calc_tf_raw = calc_mode == 'Daily (Fixed)' ? 'D' : timeframe.period
+
+// --- RS Lookback Periods & Show Toggles ---
+group_rs_periods = 'RS Periods'
+rs_length_w1 = input.int(5, 'Period 1 (Short)', minval = 5, group = group_rs_periods, inline = 'RS1')
+show_rs_w1 = input.bool(false, '', group = group_rs_periods, inline = 'RS1', tooltip = 'Show RS Column for Period 1')
+
+rs_length_m1 = input.int(21, 'Period 2 (Medium)', minval = 5, group = group_rs_periods, inline = 'RS2')
+show_rs_m1 = input.bool(true, '', group = group_rs_periods, inline = 'RS2', tooltip = 'Show RS Column for Period 2')
+
+rs_length_m3 = input.int(63, 'Period 3 (Longer)', minval = 5, group = group_rs_periods, inline = 'RS3')
+show_rs_m3 = input.bool(true, '', group = group_rs_periods, inline = 'RS3', tooltip = 'Show RS Column for Period 3')
+
+rs_length_m6 = input.int(126, 'Period 4 (Long)', minval = 5, group = group_rs_periods, inline = 'RS4')
+show_rs_m6 = input.bool(false, '', group = group_rs_periods, inline = 'RS4', tooltip = 'Show RS Column for Period 4')
+
+// --- Average RS Column Toggle ---
+show_rs_avg = input.bool(false, title = 'Show Average RS Column', group = group_rs_periods)
+
+// --- Relative Volume Column ---
+group_volume = 'Volume Settings'
+show_rel_vol = input.bool(true, title = 'Show Relative Volume Column', group = group_volume, tooltip = "Shows RVOL = today's Daily volume / 50-day simple moving average of Daily volume.")
+rel_vol_len = input.int(50, title = 'Relative Volume SMA Length', minval = 2, group = group_volume)
+
+// RVOL is defined on Daily volume. When RVOL is enabled, the table uses Daily data so
+// RS and RVOL can share one request.security() call per ticker and stay under TradingView's 64-request limit.
+calc_tf = show_rel_vol ? 'D' : calc_tf_raw
+
+
+// --- Ticker List (Max 35) ---
+group_name = 'Tickers (Max 35)' 
+ticker_1 = input.symbol('XLF', 'Ticker 1', group = group_name, inline = 'T1')
+is_set_1 = input.bool(true, '', group = group_name, inline = 'T1')
+ticker_2 = input.symbol('SMH', 'Ticker 2', group = group_name, inline = 'T2')
+is_set_2 = input.bool(true, '', group = group_name, inline = 'T2')
+ticker_3 = input.symbol('IGV', 'Ticker 3', group = group_name, inline = 'T3')
+is_set_3 = input.bool(true, '', group = group_name, inline = 'T3')
+ticker_4 = input.symbol('BAI', 'Ticker 4', group = group_name, inline = 'T4')
+is_set_4 = input.bool(true, '', group = group_name, inline = 'T4')
+ticker_5 = input.symbol('AIQ', 'Ticker 5', group = group_name, inline = 'T5')
+is_set_5 = input.bool(true, '', group = group_name, inline = 'T5')
+ticker_6 = input.symbol('DRAM', 'Ticker 6', group = group_name, inline = 'T6')
+is_set_6 = input.bool(true, '', group = group_name, inline = 'T6')
+ticker_7 = input.symbol('QTUM', 'Ticker 7', group = group_name, inline = 'T7')
+is_set_7 = input.bool(true, '', group = group_name, inline = 'T7')
+ticker_8 = input.symbol('EUV', 'Ticker 8', group = group_name, inline = 'T8')
+is_set_8 = input.bool(true, '', group = group_name, inline = 'T8')
+ticker_9 = input.symbol('IYZ', 'Ticker 9', group = group_name, inline = 'T9')
+is_set_9 = input.bool(true, '', group = group_name, inline = 'T9')
+ticker_10 = input.symbol('CIBR', 'Ticker 10', group = group_name, inline = 'T10')
+is_set_10 = input.bool(true, '', group = group_name, inline = 'T10')
+ticker_11 = input.symbol('WGMI', 'Ticker 11', group = group_name, inline = 'T11')
+is_set_11 = input.bool(true, '', group = group_name, inline = 'T11')
+ticker_12 = input.symbol('DTCR', 'Ticker 12', group = group_name, inline = 'T12')
+is_set_12 = input.bool(true, '', group = group_name, inline = 'T12')
+ticker_13 = input.symbol('IGPT', 'Ticker 13', group = group_name, inline = 'T13')
+is_set_13 = input.bool(true, '', group = group_name, inline = 'T13')
+ticker_14 = input.symbol('ICLN', 'Ticker 14', group = group_name, inline = 'T14')
+is_set_14 = input.bool(true, '', group = group_name, inline = 'T14')
+ticker_15 = input.symbol('TAN', 'Ticker 15', group = group_name, inline = 'T15')
+is_set_15 = input.bool(true, '', group = group_name, inline = 'T15')
+ticker_16 = input.symbol('PBW', 'Ticker 16', group = group_name, inline = 'T16')
+is_set_16 = input.bool(true, '', group = group_name, inline = 'T16')
+ticker_17 = input.symbol('BOTZ', 'Ticker 17', group = group_name, inline = 'T17')
+is_set_17 = input.bool(true, '', group = group_name, inline = 'T17')
+ticker_18 = input.symbol('DRIV', 'Ticker 18', group = group_name, inline = 'T18')
+is_set_18 = input.bool(true, '', group = group_name, inline = 'T18')
+ticker_19 = input.symbol('IDRV', 'Ticker 19', group = group_name, inline = 'T19')
+is_set_19 = input.bool(true, '', group = group_name, inline = 'T19')
+ticker_20 = input.symbol('SNSR', 'Ticker 20', group = group_name, inline = 'T20')
+is_set_20 = input.bool(true, '', group = group_name, inline = 'T20')
+ticker_21 = input.symbol('JEDI', 'Ticker 21', group = group_name, inline = 'T21')
+is_set_21 = input.bool(true, '', group = group_name, inline = 'T21')
+ticker_22 = input.symbol('JETS', 'Ticker 22', group = group_name, inline = 'T22')
+is_set_22 = input.bool(true, '', group = group_name, inline = 'T22')
+ticker_23 = input.symbol('SHLD', 'Ticker 23', group = group_name, inline = 'T23')
+is_set_23 = input.bool(true, '', group = group_name, inline = 'T23')
+ticker_24 = input.symbol('DXYZ', 'Ticker 24', group = group_name, inline = 'T24')
+is_set_24 = input.bool(true, '', group = group_name, inline = 'T24')
+ticker_25 = input.symbol('UFO', 'Ticker 25', group = group_name, inline = 'T25')
+is_set_25 = input.bool(true, '', group = group_name, inline = 'T25')
+ticker_26 = input.symbol('NASA', 'Ticker 26', group = group_name, inline = 'T26')
+is_set_26 = input.bool(true, '', group = group_name, inline = 'T26')
+ticker_27 = input.symbol('LIT', 'Ticker 27', group = group_name, inline = 'T27')
+is_set_27 = input.bool(true, '', group = group_name, inline = 'T27')
+ticker_28 = input.symbol('BATT', 'Ticker 28', group = group_name, inline = 'T28')
+is_set_28 = input.bool(true, '', group = group_name, inline = 'T28')
+ticker_29 = input.symbol('REMX', 'Ticker 29', group = group_name, inline = 'T29')
+is_set_29 = input.bool(true, '', group = group_name, inline = 'T29')
+ticker_30 = input.symbol('URA', 'Ticker 30', group = group_name, inline = 'T30')
+is_set_30 = input.bool(true, '', group = group_name, inline = 'T30')
+ticker_31 = input.symbol('AIPO', 'Ticker 31', group = group_name, inline = 'T31')
+is_set_31 = input.bool(true, '', group = group_name, inline = 'T31')
+ticker_32 = input.symbol('ARKG', 'Ticker 32', group = group_name, inline = 'T32')
+is_set_32 = input.bool(true, '', group = group_name, inline = 'T32')
+ticker_33 = input.symbol('PPH', 'Ticker 33', group = group_name, inline = 'T33')
+is_set_33 = input.bool(true, '', group = group_name, inline = 'T33')
+ticker_34 = input.symbol('USO', 'Ticker 34', group = group_name, inline = 'T34')
+is_set_34 = input.bool(true, '', group = group_name, inline = 'T34')
+ticker_35 = input.symbol('XRT', 'Ticker 35', group = group_name, inline = 'T35')
+is_set_35 = input.bool(true, '', group = group_name, inline = 'T35')
+
+// --- Current Chart Ticker Toggle ---
+show_current_chart_ticker = input.bool(true, title = 'Show Current Chart Ticker', group = group_rs_periods, tooltip = 'Displays the ticker symbol of the chart the indicator is attached to.')
+
+// --- Conditional Formatting Settings ---
+group_highlight = 'RS Highlight Settings'
+highlight_mode = input.string('Text', 'Highlight Mode', options=['Background', 'Text'], group = group_highlight, tooltip='Choose whether to highlight the cell background or the text itself.')
+
+// Opacity 100 means Transparency 0
+highlight_strong_color = input.color(color.new(#00ff00, 0), 'Strong RS Color', group = group_highlight, inline = 'H1')
+highlight_strong_pct = input.float(80.0, 'Strong Threshold (%)', minval = 50, maxval = 99, group = group_highlight, inline = 'H1')
+enable_strong_highlight = input.bool(true, 'Strong Highlight', group = group_highlight, inline = 'H1')
+
+highlight_neutral_color = input.color(color.new(#ffcc80, 0), 'Neutral RS Color', group = group_highlight, inline = 'H2')
+highlight_weak_pct = input.float(39.0, 'Weak Threshold (%)', minval = 1, maxval = 50, group = group_highlight, inline = 'H3')
+enable_neutral_highlight = input.bool(false, 'Neutral Highlight', group = group_highlight, inline = 'H2')
+
+highlight_weak_color = input.color(color.new(color.red, 0), 'Weak RS Color', group = group_highlight, inline = 'H3')
+enable_weak_highlight = input.bool(true, 'Weak Highlight', group = group_highlight, inline = 'H3')
+
+
+// --- Table Settings (Other) ---
+text_color = input.color(#ffcc80, title = 'Text Color', group = 'Table Appearance')
+bg_color = input.color(color.new(#000000, 100), title = 'Background Color', group = 'Table Appearance')
+size_tbl = input.string('Small', title = 'Table Size', options = ['Tiny', 'Small', 'Normal', 'Large'], group = 'Table Appearance')
+show_empty_row = input.bool(true, title = 'Add Empty Row', group = 'Table Appearance', tooltip = 'Adds a spacer row. If table is at Top, adds to top. If table is at Bottom, adds to bottom.')
+show_decimals = input.bool(true, title = 'Show Decimals', group = 'Table Appearance', tooltip = 'Uncheck to round to nearest integer')
+
+// ====================== 2. Static Data Acquisition and Functions ======================
+
+// Helper: Determine conditional color based on RS value
+f_get_rs_color_cond(rs_value) =>
+    color_to_use = color(na)
+    if not na(rs_value)
+        if rs_value >= highlight_strong_pct and enable_strong_highlight
+            color_to_use := highlight_strong_color
+        else if rs_value < highlight_weak_pct and enable_weak_highlight
+            color_to_use := highlight_weak_color
+        else if rs_value >= highlight_weak_pct and rs_value < highlight_strong_pct and enable_neutral_highlight
+            color_to_use := highlight_neutral_color
+    color_to_use
+
+// Helper: securely retrieve RS + RVOL in one ticker request.
+// This avoids the 64 unique request.*() runtime limit when 35 tickers are enabled.
+// RS is still calculated as PercentRank of ticker / benchmark.
+// RVOL is volume / SMA(volume, rel_vol_len) on the same Daily request used by RS when RVOL is enabled.
+f_get_rs_vol_data(_ticker, _tf, _l1, _l2, _l3, _l4, _vlen) =>
+    if str.length(_ticker) > 0
+        _bench_close = request.security(rs_benchmark, _tf, close, ignore_invalid_symbol=true)
+        request.security(_ticker, _tf, [
+             ta.percentrank(close / _bench_close, _l1),
+             ta.percentrank(close / _bench_close, _l2),
+             ta.percentrank(close / _bench_close, _l3),
+             ta.percentrank(close / _bench_close, _l4),
+             100 * volume / ta.sma(volume, _vlen)
+             ], ignore_invalid_symbol=true)
+    else
+        [na, na, na, na, na]
+
+// Helper: Fallback for empty inputs to avoid script errors before filtering
+f_safe_ticker(t) => str.length(t) > 0 ? t : 'SPY' 
+
+// --- Fetch Data for Current Ticker ---
+// Uses current chart ticker vs benchmark
+// FIX: Construct a clean "Exchange:Symbol" string to avoid ADJ syntax errors in spread calculation
+current_clean_ticker = syminfo.prefix + ":" + syminfo.ticker
+[rs_w1_current, rs_m1_current, rs_m3_current, rs_m6_current, rel_vol_current_raw] = f_get_rs_vol_data(current_clean_ticker, calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_current = show_rel_vol and show_current_chart_ticker ? rel_vol_current_raw : na
+
+// --- Fetch Data for 35 Tickers (Unrolled calls) ---
+// We pass the "Calculation Timeframe" (calc_tf) to ensure data is pulled from the correct timeframe (e.g. Daily) regardless of chart view.
+
+[rs_w1_1, rs_m1_1, rs_m3_1, rs_m6_1, rel_vol_1_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_1), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_1 = show_rel_vol and is_set_1 ? rel_vol_1_raw : na
+[rs_w1_2, rs_m1_2, rs_m3_2, rs_m6_2, rel_vol_2_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_2), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_2 = show_rel_vol and is_set_2 ? rel_vol_2_raw : na
+[rs_w1_3, rs_m1_3, rs_m3_3, rs_m6_3, rel_vol_3_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_3), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_3 = show_rel_vol and is_set_3 ? rel_vol_3_raw : na
+[rs_w1_4, rs_m1_4, rs_m3_4, rs_m6_4, rel_vol_4_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_4), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_4 = show_rel_vol and is_set_4 ? rel_vol_4_raw : na
+[rs_w1_5, rs_m1_5, rs_m3_5, rs_m6_5, rel_vol_5_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_5), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_5 = show_rel_vol and is_set_5 ? rel_vol_5_raw : na
+[rs_w1_6, rs_m1_6, rs_m3_6, rs_m6_6, rel_vol_6_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_6), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_6 = show_rel_vol and is_set_6 ? rel_vol_6_raw : na
+[rs_w1_7, rs_m1_7, rs_m3_7, rs_m6_7, rel_vol_7_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_7), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_7 = show_rel_vol and is_set_7 ? rel_vol_7_raw : na
+[rs_w1_8, rs_m1_8, rs_m3_8, rs_m6_8, rel_vol_8_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_8), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_8 = show_rel_vol and is_set_8 ? rel_vol_8_raw : na
+[rs_w1_9, rs_m1_9, rs_m3_9, rs_m6_9, rel_vol_9_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_9), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_9 = show_rel_vol and is_set_9 ? rel_vol_9_raw : na
+[rs_w1_10, rs_m1_10, rs_m3_10, rs_m6_10, rel_vol_10_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_10), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_10 = show_rel_vol and is_set_10 ? rel_vol_10_raw : na
+[rs_w1_11, rs_m1_11, rs_m3_11, rs_m6_11, rel_vol_11_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_11), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_11 = show_rel_vol and is_set_11 ? rel_vol_11_raw : na
+[rs_w1_12, rs_m1_12, rs_m3_12, rs_m6_12, rel_vol_12_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_12), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_12 = show_rel_vol and is_set_12 ? rel_vol_12_raw : na
+[rs_w1_13, rs_m1_13, rs_m3_13, rs_m6_13, rel_vol_13_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_13), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_13 = show_rel_vol and is_set_13 ? rel_vol_13_raw : na
+[rs_w1_14, rs_m1_14, rs_m3_14, rs_m6_14, rel_vol_14_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_14), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_14 = show_rel_vol and is_set_14 ? rel_vol_14_raw : na
+[rs_w1_15, rs_m1_15, rs_m3_15, rs_m6_15, rel_vol_15_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_15), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_15 = show_rel_vol and is_set_15 ? rel_vol_15_raw : na
+[rs_w1_16, rs_m1_16, rs_m3_16, rs_m6_16, rel_vol_16_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_16), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_16 = show_rel_vol and is_set_16 ? rel_vol_16_raw : na
+[rs_w1_17, rs_m1_17, rs_m3_17, rs_m6_17, rel_vol_17_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_17), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_17 = show_rel_vol and is_set_17 ? rel_vol_17_raw : na
+[rs_w1_18, rs_m1_18, rs_m3_18, rs_m6_18, rel_vol_18_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_18), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_18 = show_rel_vol and is_set_18 ? rel_vol_18_raw : na
+[rs_w1_19, rs_m1_19, rs_m3_19, rs_m6_19, rel_vol_19_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_19), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_19 = show_rel_vol and is_set_19 ? rel_vol_19_raw : na
+[rs_w1_20, rs_m1_20, rs_m3_20, rs_m6_20, rel_vol_20_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_20), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_20 = show_rel_vol and is_set_20 ? rel_vol_20_raw : na
+[rs_w1_21, rs_m1_21, rs_m3_21, rs_m6_21, rel_vol_21_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_21), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_21 = show_rel_vol and is_set_21 ? rel_vol_21_raw : na
+[rs_w1_22, rs_m1_22, rs_m3_22, rs_m6_22, rel_vol_22_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_22), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_22 = show_rel_vol and is_set_22 ? rel_vol_22_raw : na
+[rs_w1_23, rs_m1_23, rs_m3_23, rs_m6_23, rel_vol_23_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_23), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_23 = show_rel_vol and is_set_23 ? rel_vol_23_raw : na
+[rs_w1_24, rs_m1_24, rs_m3_24, rs_m6_24, rel_vol_24_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_24), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_24 = show_rel_vol and is_set_24 ? rel_vol_24_raw : na
+[rs_w1_25, rs_m1_25, rs_m3_25, rs_m6_25, rel_vol_25_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_25), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_25 = show_rel_vol and is_set_25 ? rel_vol_25_raw : na
+[rs_w1_26, rs_m1_26, rs_m3_26, rs_m6_26, rel_vol_26_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_26), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_26 = show_rel_vol and is_set_26 ? rel_vol_26_raw : na
+[rs_w1_27, rs_m1_27, rs_m3_27, rs_m6_27, rel_vol_27_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_27), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_27 = show_rel_vol and is_set_27 ? rel_vol_27_raw : na
+[rs_w1_28, rs_m1_28, rs_m3_28, rs_m6_28, rel_vol_28_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_28), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_28 = show_rel_vol and is_set_28 ? rel_vol_28_raw : na
+[rs_w1_29, rs_m1_29, rs_m3_29, rs_m6_29, rel_vol_29_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_29), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_29 = show_rel_vol and is_set_29 ? rel_vol_29_raw : na
+[rs_w1_30, rs_m1_30, rs_m3_30, rs_m6_30, rel_vol_30_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_30), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_30 = show_rel_vol and is_set_30 ? rel_vol_30_raw : na
+[rs_w1_31, rs_m1_31, rs_m3_31, rs_m6_31, rel_vol_31_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_31), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_31 = show_rel_vol and is_set_31 ? rel_vol_31_raw : na
+[rs_w1_32, rs_m1_32, rs_m3_32, rs_m6_32, rel_vol_32_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_32), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_32 = show_rel_vol and is_set_32 ? rel_vol_32_raw : na
+[rs_w1_33, rs_m1_33, rs_m3_33, rs_m6_33, rel_vol_33_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_33), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_33 = show_rel_vol and is_set_33 ? rel_vol_33_raw : na
+[rs_w1_34, rs_m1_34, rs_m3_34, rs_m6_34, rel_vol_34_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_34), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_34 = show_rel_vol and is_set_34 ? rel_vol_34_raw : na
+[rs_w1_35, rs_m1_35, rs_m3_35, rs_m6_35, rel_vol_35_raw] = f_get_rs_vol_data(f_safe_ticker(ticker_35), calc_tf, rs_length_w1, rs_length_m1, rs_length_m3, rs_length_m6, rel_vol_len)
+rel_vol_35 = show_rel_vol and is_set_35 ? rel_vol_35_raw : na
+
+// ====================== 3. Data Aggregation and Sorting ======================
+
+// Data arrays
+var array<string> ticker_names_data = array.new_string()
+var array<float> rs_w1_data = array.new_float()
+var array<float> rs_m1_data = array.new_float()
+var array<float> rs_m3_data = array.new_float()
+var array<float> rs_m6_data = array.new_float()
+var array<float> rs_avg_data = array.new_float()
+var array<float> rel_vol_data = array.new_float()
+
+// Table ID
+var table rs_table = na
+
+// Function to clean ticker prefix (BATS:, NYSE:) AND remove garbage characters (", }, {)
+f_clean_ticker_name(ticker_name) =>
+    // 1. Remove Exchange Prefix
+    array_split = str.split(ticker_name, ':')
+    no_prefix = array.size(array_split) > 1 ? array.get(array_split, array.size(array_split) - 1) : ticker_name
+    
+    // 2. Remove Common Garbage Characters
+    s1 = str.replace_all(no_prefix, '"', '')
+    s2 = str.replace_all(s1, '}', '')
+    s3 = str.replace_all(s2, '{', '')
+    s3
+
+// Function to calculate the average of selected RS periods
+f_calculate_avg_rs(rs_w1, rs_m1, rs_m3, rs_m6, show_w1, show_m1, show_m3, show_m6) =>
+    total_rs = 0.0
+    count = 0.0
+
+    if show_w1 and not na(rs_w1)
+        total_rs := total_rs + rs_w1
+        count := count + 1
+    if show_m1 and not na(rs_m1)
+        total_rs := total_rs + rs_m1
+        count := count + 1
+    if show_m3 and not na(rs_m3)
+        total_rs := total_rs + rs_m3
+        count := count + 1
+    if show_m6 and not na(rs_m6)
+        total_rs := total_rs + rs_m6
+        count := count + 1
+
+    avg = count > 0 ? total_rs / count : na
+    avg
+
+if barstate.islast
+    // Set styling parameters
+    text_size_id = switch size_tbl
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Large' => size.large
+        => size.normal
+
+    // Updated switch to include Center alignments
+    table_pos_id = switch table_position
+        'Left Top' => position.top_left
+        'Left Center' => position.middle_left
+        'Left Bottom' => position.bottom_left
+        'Center Top' => position.top_center
+        'Center Center' => position.middle_center
+        'Center Bottom' => position.bottom_center
+        'Right Top' => position.top_right
+        'Right Center' => position.middle_right
+        'Right Bottom' => position.bottom_right
+        => position.top_right
+
+    // Determine if we are anchored to bottom
+    is_bottom_anchor = str.contains(table_position, 'Bottom')
+
+    bg_col_final = bg_color 
+    
+    // Formatting string based on user input
+    format_str = show_decimals ? '0.00' : '0'
+
+    array.clear(ticker_names_data)
+    array.clear(rs_w1_data)
+    array.clear(rs_m1_data)
+    array.clear(rs_m3_data)
+    array.clear(rs_m6_data)
+    array.clear(rs_avg_data)
+    array.clear(rel_vol_data)
+
+    // Aggregate data from inputs and calculations
+    ticker_symbols = array.from(ticker_1, ticker_2, ticker_3, ticker_4, ticker_5, ticker_6, ticker_7, ticker_8, ticker_9, ticker_10, ticker_11, ticker_12, ticker_13, ticker_14, ticker_15, ticker_16, ticker_17, ticker_18, ticker_19, ticker_20, ticker_21, ticker_22, ticker_23, ticker_24, ticker_25, ticker_26, ticker_27, ticker_28, ticker_29, ticker_30, ticker_31, ticker_32, ticker_33, ticker_34, ticker_35)
+    is_set_flags = array.from(is_set_1, is_set_2, is_set_3, is_set_4, is_set_5, is_set_6, is_set_7, is_set_8, is_set_9, is_set_10, is_set_11, is_set_12, is_set_13, is_set_14, is_set_15, is_set_16, is_set_17, is_set_18, is_set_19, is_set_20, is_set_21, is_set_22, is_set_23, is_set_24, is_set_25, is_set_26, is_set_27, is_set_28, is_set_29, is_set_30, is_set_31, is_set_32, is_set_33, is_set_34, is_set_35)
+
+    rs_w1_values = array.from(rs_w1_1, rs_w1_2, rs_w1_3, rs_w1_4, rs_w1_5, rs_w1_6, rs_w1_7, rs_w1_8, rs_w1_9, rs_w1_10, rs_w1_11, rs_w1_12, rs_w1_13, rs_w1_14, rs_w1_15, rs_w1_16, rs_w1_17, rs_w1_18, rs_w1_19, rs_w1_20, rs_w1_21, rs_w1_22, rs_w1_23, rs_w1_24, rs_w1_25, rs_w1_26, rs_w1_27, rs_w1_28, rs_w1_29, rs_w1_30, rs_w1_31, rs_w1_32, rs_w1_33, rs_w1_34, rs_w1_35)
+    rs_m1_values = array.from(rs_m1_1, rs_m1_2, rs_m1_3, rs_m1_4, rs_m1_5, rs_m1_6, rs_m1_7, rs_m1_8, rs_m1_9, rs_m1_10, rs_m1_11, rs_m1_12, rs_m1_13, rs_m1_14, rs_m1_15, rs_m1_16, rs_m1_17, rs_m1_18, rs_m1_19, rs_m1_20, rs_m1_21, rs_m1_22, rs_m1_23, rs_m1_24, rs_m1_25, rs_m1_26, rs_m1_27, rs_m1_28, rs_m1_29, rs_m1_30, rs_m1_31, rs_m1_32, rs_m1_33, rs_m1_34, rs_m1_35)
+    rs_m3_values = array.from(rs_m3_1, rs_m3_2, rs_m3_3, rs_m3_4, rs_m3_5, rs_m3_6, rs_m3_7, rs_m3_8, rs_m3_9, rs_m3_10, rs_m3_11, rs_m3_12, rs_m3_13, rs_m3_14, rs_m3_15, rs_m3_16, rs_m3_17, rs_m3_18, rs_m3_19, rs_m3_20, rs_m3_21, rs_m3_22, rs_m3_23, rs_m3_24, rs_m3_25, rs_m3_26, rs_m3_27, rs_m3_28, rs_m3_29, rs_m3_30, rs_m3_31, rs_m3_32, rs_m3_33, rs_m3_34, rs_m3_35)
+    rs_m6_values = array.from(rs_m6_1, rs_m6_2, rs_m6_3, rs_m6_4, rs_m6_5, rs_m6_6, rs_m6_7, rs_m6_8, rs_m6_9, rs_m6_10, rs_m6_11, rs_m6_12, rs_m6_13, rs_m6_14, rs_m6_15, rs_m6_16, rs_m6_17, rs_m6_18, rs_m6_19, rs_m6_20, rs_m6_21, rs_m6_22, rs_m6_23, rs_m6_24, rs_m6_25, rs_m6_26, rs_m6_27, rs_m6_28, rs_m6_29, rs_m6_30, rs_m6_31, rs_m6_32, rs_m6_33, rs_m6_34, rs_m6_35)
+    rel_vol_values = array.from(rel_vol_1, rel_vol_2, rel_vol_3, rel_vol_4, rel_vol_5, rel_vol_6, rel_vol_7, rel_vol_8, rel_vol_9, rel_vol_10, rel_vol_11, rel_vol_12, rel_vol_13, rel_vol_14, rel_vol_15, rel_vol_16, rel_vol_17, rel_vol_18, rel_vol_19, rel_vol_20, rel_vol_21, rel_vol_22, rel_vol_23, rel_vol_24, rel_vol_25, rel_vol_26, rel_vol_27, rel_vol_28, rel_vol_29, rel_vol_30, rel_vol_31, rel_vol_32, rel_vol_33, rel_vol_34, rel_vol_35)
+
+    // Keep the current chart ticker separate from the sortable ticker-list dataset.
+    // It will be displayed as a pinned row/column at the top/left of the table,
+    // while the 35 configured tickers are sorted independently by the selected metric.
+
+    for i = 0 to 34 by 1
+        rs_w1_f = array.get(rs_w1_values, i)
+        rs_m1_f = array.get(rs_m1_values, i)
+        rs_m3_f = array.get(rs_m3_values, i)
+        rs_m6_f = array.get(rs_m6_values, i)
+        rel_vol_f = array.get(rel_vol_values, i)
+
+        // Calculate Average RS
+        avg_rs = f_calculate_avg_rs(rs_w1_f, rs_m1_f, rs_m3_f, rs_m6_f, show_rs_w1, show_rs_m1, show_rs_m3, show_rs_m6)
+
+        ticker_name_clean = f_clean_ticker_name(array.get(ticker_symbols, i))
+
+        if array.get(is_set_flags, i) and array.get(ticker_symbols, i) != ''
+            array.push(ticker_names_data, ticker_name_clean)
+            array.push(rs_w1_data, rs_w1_f)
+            array.push(rs_m1_data, rs_m1_f)
+            array.push(rs_m3_data, rs_m3_f)
+            array.push(rs_m6_data, rs_m6_f)
+            array.push(rs_avg_data, avg_rs)
+            array.push(rel_vol_data, rel_vol_f)
+
+    // Execute sorting after the arrays are populated.
+    // NA values are replaced with a very low sentinel so invalid/missing RVOL values sort to the bottom.
+    array<float> rs_to_sort = switch sort_key_options
+        'P1' => rs_w1_data
+        'P2' => rs_m1_data
+        'P3' => rs_m3_data
+        'P4' => rs_m6_data
+        'P Avg' => rs_avg_data
+        'P RVol' => rel_vol_data
+        => rs_m1_data // Default to Period 2 (21 bars)
+
+    array<float> rs_sort_copy = array.new_float()
+    for i = 0 to array.size(rs_to_sort) - 1 by 1
+        sort_val = array.get(rs_to_sort, i)
+        array.push(rs_sort_copy, na(sort_val) ? -10000000000.0 : sort_val)
+
+    array<int> sorted_indices = array.sort_indices(rs_sort_copy, order.descending)
+
+    // The current chart ticker stays pinned and is not included in the sorted 35-ticker component list.
+    show_current_pinned = show_current_chart_ticker
+
+    // Calculate dimensions based on Active Metrics
+    num_rs_metrics = (show_rs_w1 ? 1 : 0) + (show_rs_m1 ? 1 : 0) + (show_rs_m3 ? 1 : 0) + (show_rs_m6 ? 1 : 0) + (show_rs_avg ? 1 : 0) + (show_rel_vol ? 1 : 0)
+    
+    // ----------------------------------------------------
+    // 4. Table Creation (VERTICAL vs HORIZONTAL)
+    // ----------------------------------------------------
+
+    if table_orientation == 'Vertical'
+        // --- Vertical Mode (Original) ---
+        total_columns = 1 + num_rs_metrics
+        if total_columns < 1
+            total_columns := 1
+        else if total_columns == 1 and num_rs_metrics > 0
+            total_columns := 2
+
+        table_rows = 1 + (show_current_pinned ? 1 : 0) + array.size(ticker_names_data) + (show_empty_row ? 1 : 0)
+        rs_table := table.new(table_pos_id, total_columns, table_rows, bgcolor = bg_col_final) 
+
+        row = 0
+        col = 0
+
+        // Empty row (Top) - Only if not anchored to bottom
+        if show_empty_row and not is_bottom_anchor
+            for i = 0 to total_columns - 1 by 1
+                table.cell(rs_table, i, row, '', bgcolor = bg_col_final)
+            row := row + 1
+            
+        // Header
+        table.cell(rs_table, col, row, 'Ticker', text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_left, text_size = text_size_id)
+        col := col + 1
+
+        if show_rs_w1
+            is_sort_key = sort_key_options == 'P1' ? '*' : ''
+            table.cell(rs_table, col, row, 'RS (' + str.tostring(rs_length_w1) + ')' + is_sort_key, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_center, text_size = text_size_id)
+            col := col + 1
+        if show_rs_m1
+            is_sort_key = sort_key_options == 'P2' ? '*' : ''
+            table.cell(rs_table, col, row, 'RS (' + str.tostring(rs_length_m1) + ')' + is_sort_key, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_center, text_size = text_size_id)
+            col := col + 1
+        if show_rs_m3
+            is_sort_key = sort_key_options == 'P3' ? '*' : ''
+            table.cell(rs_table, col, row, 'RS (' + str.tostring(rs_length_m3) + ')' + is_sort_key, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_center, text_size = text_size_id)
+            col := col + 1
+        if show_rs_m6
+            is_sort_key = sort_key_options == 'P4' ? '*' : ''
+            table.cell(rs_table, col, row, 'RS (' + str.tostring(rs_length_m6) + ')' + is_sort_key, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_center, text_size = text_size_id)
+            col := col + 1
+        if show_rs_avg
+            is_sort_key = sort_key_options == 'P Avg' ? '*' : ''
+            table.cell(rs_table, col, row, 'RS Avg' + is_sort_key, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_center, text_size = text_size_id)
+            col := col + 1
+        if show_rel_vol
+            is_sort_key = sort_key_options == 'P RVol' ? '*' : ''
+            table.cell(rs_table, col, row, 'RVOL' + is_sort_key, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_center, text_size = text_size_id)
+            col := col + 1
+        
+        row := row + 1
+
+        // Current Ticker
+        if show_current_pinned
+            col := 0
+            current_ticker_name = f_clean_ticker_name(syminfo.tickerid)
+            avg_rs_current = f_calculate_avg_rs(rs_w1_current, rs_m1_current, rs_m3_current, rs_m6_current, show_rs_w1, show_rs_m1, show_rs_m3, show_rs_m6)
+            
+            rs_w1_str_c = na(rs_w1_current) ? '-' : str.tostring(rs_w1_current, format_str) + '%'
+            rs_m1_str_c = na(rs_m1_current) ? '-' : str.tostring(rs_m1_current, format_str) + '%'
+            rs_m3_str_c = na(rs_m3_current) ? '-' : str.tostring(rs_m3_current, format_str) + '%'
+            rs_m6_str_c = na(rs_m6_current) ? '-' : str.tostring(rs_m6_current, format_str) + '%'
+            rs_avg_str_c = na(avg_rs_current) ? '-' : str.tostring(avg_rs_current, format_str) + '%'
+            rel_vol_str_c = na(rel_vol_current) ? '-' : str.tostring(rel_vol_current, format_str) + '%'
+
+            table.cell(rs_table, col, row, current_ticker_name, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_left, text_valign = text.align_center, text_size = text_size_id)
+            col := col + 1
+
+            if show_rs_w1
+                cond_c = f_get_rs_color_cond(rs_w1_current)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col, row, rs_w1_str_c, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                col := col + 1
+            if show_rs_m1
+                cond_c = f_get_rs_color_cond(rs_m1_current)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col, row, rs_m1_str_c, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                col := col + 1
+            if show_rs_m3
+                cond_c = f_get_rs_color_cond(rs_m3_current)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col, row, rs_m3_str_c, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                col := col + 1
+            if show_rs_m6
+                cond_c = f_get_rs_color_cond(rs_m6_current)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col, row, rs_m6_str_c, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                col := col + 1
+            if show_rs_avg
+                cond_c = f_get_rs_color_cond(avg_rs_current)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col, row, rs_avg_str_c, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                col := col + 1
+            if show_rel_vol
+                table.cell(rs_table, col, row, rel_vol_str_c, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                col := col + 1
+            row := row + 1
+
+        // Sorted Tickers
+        for i = 0 to array.size(ticker_names_data) - 1 by 1
+            original_index = array.get(sorted_indices, i)
+            ticker_name = array.get(ticker_names_data, original_index)
+
+            rs_w1_f = array.get(rs_w1_data, original_index)
+            rs_m1_f = array.get(rs_m1_data, original_index)
+            rs_m3_f = array.get(rs_m3_data, original_index)
+            rs_m6_f = array.get(rs_m6_data, original_index)
+            rs_avg_f = array.get(rs_avg_data, original_index)
+            rel_vol_f = array.get(rel_vol_data, original_index)
+
+            rs_w1_str = na(rs_w1_f) ? '-' : str.tostring(rs_w1_f, format_str) + '%'
+            rs_m1_str = na(rs_m1_f) ? '-' : str.tostring(rs_m1_f, format_str) + '%'
+            rs_m3_str = na(rs_m3_f) ? '-' : str.tostring(rs_m3_f, format_str) + '%'
+            rs_m6_str = na(rs_m6_f) ? '-' : str.tostring(rs_m6_f, format_str) + '%'
+            rs_avg_str = na(rs_avg_f) ? '-' : str.tostring(rs_avg_f, format_str) + '%'
+            rel_vol_str = na(rel_vol_f) ? '-' : str.tostring(rel_vol_f, format_str) + '%'
+
+            col = 0
+            table.cell(rs_table, col, row, ticker_name, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_left, text_valign = text.align_center, text_size = text_size_id)
+            col := col + 1
+
+            if show_rs_w1
+                cond_c = f_get_rs_color_cond(rs_w1_f)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col, row, rs_w1_str, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                col := col + 1
+            if show_rs_m1
+                cond_c = f_get_rs_color_cond(rs_m1_f)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col, row, rs_m1_str, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                col := col + 1
+            if show_rs_m3
+                cond_c = f_get_rs_color_cond(rs_m3_f)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col, row, rs_m3_str, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                col := col + 1
+            if show_rs_m6
+                cond_c = f_get_rs_color_cond(rs_m6_f)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col, row, rs_m6_str, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                col := col + 1
+            if show_rs_avg
+                cond_c = f_get_rs_color_cond(rs_avg_f)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col, row, rs_avg_str, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                col := col + 1
+            if show_rel_vol
+                table.cell(rs_table, col, row, rel_vol_str, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_right, text_valign = text.align_center, text_size = text_size_id)
+                col := col + 1
+            row := row + 1
+
+        // Empty row (Bottom) - Only if anchored to bottom
+        if show_empty_row and is_bottom_anchor
+            for i = 0 to total_columns - 1 by 1
+                table.cell(rs_table, i, row, '', bgcolor = bg_col_final)
+    
+    else
+        // --- Horizontal Mode (Transposed) ---
+        // Columns = 1 (Metric Name) + (1 Current Ticker if on) + N (Sorted Tickers)
+        total_cols_h = 1 + (show_current_pinned ? 1 : 0) + array.size(ticker_names_data)
+        // Add empty row to height if enabled
+        total_rows_h = 1 + num_rs_metrics + (show_empty_row ? 1 : 0)
+
+        // Column width calculation removed to allow auto-sizing
+
+        rs_table := table.new(table_pos_id, total_cols_h, total_rows_h, bgcolor = bg_col_final)
+
+        row_h = 0
+        
+        // 0. Empty Row (Top) - Only if NOT anchored to bottom
+        if show_empty_row and not is_bottom_anchor
+            for i = 0 to total_cols_h - 1 by 1
+                table.cell(rs_table, i, row_h, '', bgcolor = bg_col_final)
+            row_h := row_h + 1
+
+        // 1. Header Row
+        // Cell (0, row_h): Label "Ticker"
+        table.cell(rs_table, 0, row_h, 'Ticker', text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_left, text_size = text_size_id)
+        
+        current_col = 1
+        
+        // Current Ticker Header
+        if show_current_pinned
+            current_ticker_name = f_clean_ticker_name(syminfo.tickerid)
+            table.cell(rs_table, current_col, row_h, current_ticker_name, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_center, text_size = text_size_id)
+            current_col := current_col + 1
+            
+        // Sorted Ticker Headers
+        for i = 0 to array.size(ticker_names_data) - 1 by 1
+            original_index = array.get(sorted_indices, i)
+            t_name = array.get(ticker_names_data, original_index)
+            table.cell(rs_table, current_col, row_h, t_name, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_center, text_size = text_size_id)
+            current_col := current_col + 1
+            
+        // Move to next row for Data
+        row_h := row_h + 1
+        
+        // 2. Data Rows (Metrics)
+        
+        // Metric 1: W1
+        if show_rs_w1
+            col_idx = 0
+            lbl_final = 'RS (' + str.tostring(rs_length_w1) + ')' + (sort_key_options == 'P1' ? '*' : '')
+            table.cell(rs_table, col_idx, row_h, lbl_final, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_left, text_size = text_size_id)
+            col_idx := col_idx + 1
+            
+            if show_current_pinned
+                val_str = na(rs_w1_current) ? '-' : str.tostring(rs_w1_current, format_str) + '%'
+                cond_c = f_get_rs_color_cond(rs_w1_current)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col_idx, row_h, val_str, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_size = text_size_id)
+                col_idx := col_idx + 1
+
+            for k = 0 to array.size(sorted_indices) - 1
+                orig_idx = array.get(sorted_indices, k)
+                val = array.get(rs_w1_data, orig_idx)
+                val_str_s = na(val) ? '-' : str.tostring(val, format_str) + '%'
+                cond_c = f_get_rs_color_cond(val)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col_idx, row_h, val_str_s, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_size = text_size_id)
+                col_idx := col_idx + 1
+            row_h := row_h + 1
+
+        // Metric 2: M1
+        if show_rs_m1
+            col_idx = 0
+            lbl_final = 'RS (' + str.tostring(rs_length_m1) + ')' + (sort_key_options == 'P2' ? '*' : '')
+            table.cell(rs_table, col_idx, row_h, lbl_final, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_left, text_size = text_size_id)
+            col_idx := col_idx + 1
+            
+            if show_current_pinned
+                val_str = na(rs_m1_current) ? '-' : str.tostring(rs_m1_current, format_str) + '%'
+                cond_c = f_get_rs_color_cond(rs_m1_current)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col_idx, row_h, val_str, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_size = text_size_id)
+                col_idx := col_idx + 1
+
+            for k = 0 to array.size(sorted_indices) - 1
+                orig_idx = array.get(sorted_indices, k)
+                val = array.get(rs_m1_data, orig_idx)
+                val_str_s = na(val) ? '-' : str.tostring(val, format_str) + '%'
+                cond_c = f_get_rs_color_cond(val)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col_idx, row_h, val_str_s, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_size = text_size_id)
+                col_idx := col_idx + 1
+            row_h := row_h + 1
+            
+        // Metric 3: M3
+        if show_rs_m3
+            col_idx = 0
+            lbl_final = 'RS (' + str.tostring(rs_length_m3) + ')' + (sort_key_options == 'P3' ? '*' : '')
+            table.cell(rs_table, col_idx, row_h, lbl_final, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_left, text_size = text_size_id)
+            col_idx := col_idx + 1
+            
+            if show_current_pinned
+                val_str = na(rs_m3_current) ? '-' : str.tostring(rs_m3_current, format_str) + '%'
+                cond_c = f_get_rs_color_cond(rs_m3_current)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col_idx, row_h, val_str, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_size = text_size_id)
+                col_idx := col_idx + 1
+
+            for k = 0 to array.size(sorted_indices) - 1
+                orig_idx = array.get(sorted_indices, k)
+                val = array.get(rs_m3_data, orig_idx)
+                val_str_s = na(val) ? '-' : str.tostring(val, format_str) + '%'
+                cond_c = f_get_rs_color_cond(val)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col_idx, row_h, val_str_s, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_size = text_size_id)
+                col_idx := col_idx + 1
+            row_h := row_h + 1
+            
+        // Metric 4: M6
+        if show_rs_m6
+            col_idx = 0
+            lbl_final = 'RS (' + str.tostring(rs_length_m6) + ')' + (sort_key_options == 'P4' ? '*' : '')
+            table.cell(rs_table, col_idx, row_h, lbl_final, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_left, text_size = text_size_id)
+            col_idx := col_idx + 1
+            
+            if show_current_pinned
+                val_str = na(rs_m6_current) ? '-' : str.tostring(rs_m6_current, format_str) + '%'
+                cond_c = f_get_rs_color_cond(rs_m6_current)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col_idx, row_h, val_str, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_size = text_size_id)
+                col_idx := col_idx + 1
+
+            for k = 0 to array.size(sorted_indices) - 1
+                orig_idx = array.get(sorted_indices, k)
+                val = array.get(rs_m6_data, orig_idx)
+                val_str_s = na(val) ? '-' : str.tostring(val, format_str) + '%'
+                cond_c = f_get_rs_color_cond(val)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col_idx, row_h, val_str_s, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_size = text_size_id)
+                col_idx := col_idx + 1
+            row_h := row_h + 1
+
+        // Metric 5: Avg
+        if show_rs_avg
+            col_idx = 0
+            lbl_final = 'RS Avg' + (sort_key_options == 'P Avg' ? '*' : '')
+            table.cell(rs_table, col_idx, row_h, lbl_final, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_left, text_size = text_size_id)
+            col_idx := col_idx + 1
+            
+            if show_current_pinned
+                avg_rs_current = f_calculate_avg_rs(rs_w1_current, rs_m1_current, rs_m3_current, rs_m6_current, show_rs_w1, show_rs_m1, show_rs_m3, show_rs_m6)
+                val_str = na(avg_rs_current) ? '-' : str.tostring(avg_rs_current, format_str) + '%'
+                cond_c = f_get_rs_color_cond(avg_rs_current)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col_idx, row_h, val_str, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_size = text_size_id)
+                col_idx := col_idx + 1
+
+            for k = 0 to array.size(sorted_indices) - 1
+                orig_idx = array.get(sorted_indices, k)
+                val = array.get(rs_avg_data, orig_idx)
+                val_str_s = na(val) ? '-' : str.tostring(val, format_str) + '%'
+                cond_c = f_get_rs_color_cond(val)
+                c_bg = highlight_mode == 'Background' and not na(cond_c) ? cond_c : bg_col_final
+                c_txt = highlight_mode == 'Text' and not na(cond_c) ? cond_c : text_color
+                table.cell(rs_table, col_idx, row_h, val_str_s, text_color = c_txt, bgcolor = c_bg, text_halign = text.align_right, text_size = text_size_id)
+                col_idx := col_idx + 1
+            row_h := row_h + 1
+
+        // Metric 6: Relative Volume
+        if show_rel_vol
+            col_idx = 0
+            lbl_final = 'RVOL' + (sort_key_options == 'P RVol' ? '*' : '')
+            table.cell(rs_table, col_idx, row_h, lbl_final, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_left, text_size = text_size_id)
+            col_idx := col_idx + 1
+            
+            if show_current_pinned
+                val_str = na(rel_vol_current) ? '-' : str.tostring(rel_vol_current, format_str) + '%'
+                table.cell(rs_table, col_idx, row_h, val_str, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_right, text_size = text_size_id)
+                col_idx := col_idx + 1
+
+            for k = 0 to array.size(sorted_indices) - 1
+                orig_idx = array.get(sorted_indices, k)
+                val = array.get(rel_vol_data, orig_idx)
+                val_str_s = na(val) ? '-' : str.tostring(val, format_str) + '%'
+                table.cell(rs_table, col_idx, row_h, val_str_s, text_color = text_color, bgcolor = bg_col_final, text_halign = text.align_right, text_size = text_size_id)
+                col_idx := col_idx + 1
+            row_h := row_h + 1
+
+        // Empty row (Bottom) - Only if anchored to bottom
+        if show_empty_row and is_bottom_anchor
+            for i = 0 to total_cols_h - 1 by 1
+                table.cell(rs_table, i, row_h, '', bgcolor = bg_col_final)
