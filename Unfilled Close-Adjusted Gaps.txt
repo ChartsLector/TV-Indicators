@@ -1,4 +1,5 @@
 // Inspired by @NickDrendel video: https://www.youtube.com/watch?v=7vH0iWBJVIQ
+// This indicator was released 05/23/2026, Nick released his neater indicator on 06/11/2026. I recommend using the Drendel Gaps indicator: https://www.tradingview.com/v/QSAcbB1X/
 // Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 //@version=5
 indicator("Unfilled Close-Adjusted Gaps", overlay=true, max_boxes_count=500, max_lines_count=500)
