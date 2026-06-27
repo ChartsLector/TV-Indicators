@@ -2,7 +2,7 @@
 // and @JohnMuchow https://x.com/JohnMuchow/article/20336662144 72409492
 // Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 //@version=6
-indicator("Market Action Pulse & VIX Mood Ring", shorttitle="MAP+VMR", overlay=false)
+indicator("Market Action Pulse & VIX Mood Ring", shorttitle="MAP+VMR", overlay=true)
 
 //──────────────────────────────────────────────────────────────────────────────
 // Shared table inputs
@@ -121,7 +121,7 @@ tmhGreenBg  = color.rgb(0, 130, 0)
 tmhBlueBg   = color.rgb(150, 182, 243)
 tmhYellowBg = color.rgb(220, 190, 0)
 tmhAmberBg  = color.rgb(255, 150, 0)
-tmhOrangeBg = color.rgb(255, 85, 0)
+tmhPurpleBg = color.rgb(162, 0, 255)
 tmhRedBg    = color.rgb(180, 0, 0)
 tmhGrayBg   = color.rgb(45, 45, 45)
 tmhDarkBg   = color.rgb(25, 25, 25)
@@ -133,7 +133,7 @@ vmrGreenBg  = color.rgb(0, 130, 0)
 vmrBlueBg   = color.rgb(80, 135, 220)
 vmrYellowBg = color.rgb(220, 190, 0)
 vmrAmberBg  = color.rgb(255, 150, 0)
-vmrOrangeBg = color.rgb(255, 85, 0)
+vmrPurpleBg = color.rgb(162, 0, 255)
 vmrRedBg    = color.rgb(180, 0, 0)
 vmrGrayBg   = color.rgb(45, 45, 45)
 vmrDarkBg   = color.rgb(25, 25, 25)
@@ -288,7 +288,7 @@ tmhDashboardState =
      mccOscOk and (breakingDownTrend or crushingDownTrend)    ? "BLUE"   :
      mccUptrend and not allOtherPrimaryYes                    ? "YELLOW" :
      mccAttempt and anyOtherPrimaryYes                        ? "AMBER"  :
-     not mccUptrend and not mccAttempt and anyOtherPrimaryYes ? "ORANGE" :
+     not mccUptrend and not mccAttempt and anyOtherPrimaryYes ? "PURPLE" :
      "RED"
 
 tmhDashboardColor = switch tmhDashboardState
@@ -296,7 +296,7 @@ tmhDashboardColor = switch tmhDashboardState
     "BLUE"   => tmhBlueBg
     "YELLOW" => tmhYellowBg
     "AMBER"  => tmhAmberBg
-    "ORANGE" => tmhOrangeBg
+    "PURPLE" => tmhPurpleBg
     => tmhRedBg
 
 tmhDashboardScore = switch tmhDashboardState
@@ -304,7 +304,7 @@ tmhDashboardScore = switch tmhDashboardState
     "BLUE"   => 4
     "YELLOW" => 3
     "AMBER"  => 2
-    "ORANGE" => 1
+    "PURPLE" => 1
     => 0
 
 //──────────────────────────────────────────────────────────────────────────────
@@ -315,17 +315,17 @@ f_exposureRule(_state, _prevState) =>
 
     if _state == "GREEN"
         rule := "Build toward full exposure progressively."
-    else if _state == "BLUE" and (_prevState == "Orange" or _prevState == "Yellow")
-        rule := "Risky→Blue: build up to ~60%; add more if de-risked."
-    else if _state == "BLUE" and not (_prevState == "Orange" or _prevState == "Yellow")
+    else if _state == "BLUE" and (_prevState == "Purple" or _prevState == "Yellow")
+        rule := "Risky→Blue: build up to 60%; add more if de-risked."
+    else if _state == "BLUE" and not (_prevState == "Purple" or _prevState == "Yellow")
         rule := "Blue: add more if positions gain traction."
     else if _state == "YELLOW" and _prevState == "GREEN"
         rule := "Green→Yellow: raise stops, trim heat, protect gains."
     else if _state == "YELLOW"
-        rule := "From cash→Yellow: build up to ~30%; add more if de-risked."
+        rule := "From cash→Yellow: build up to 30%; add more if de-risked."
     else if _state == "AMBER"
         rule := "Test only 1–2 trades; add more if de-risked."
-    else if _state == "ORANGE"
+    else if _state == "PURPLE"
         rule := "No new trades; reduce open heat and protect gains."
     else
         rule := "Exit longs / stay cash; tactical shorts allowed with hard stops."
@@ -541,7 +541,7 @@ vmrDashboardState =
      compositeScore >= 65.0   ? "BLUE"   :
      compositeScore >= 55.0   ? "YELLOW" :
      compositeScore >= 45.0   ? "AMBER"  :
-     compositeScore >= 30.0   ? "ORANGE" :
+     compositeScore >= 30.0   ? "PURPLE" :
      "RED"
 
 moodLabel = switch vmrDashboardState
@@ -549,7 +549,7 @@ moodLabel = switch vmrDashboardState
     "BLUE"   => "Constructive"
     "YELLOW" => "Neutral"
     "AMBER"  => "Caution"
-    "ORANGE" => "Defensive"
+    "PURPLE" => "Defensive"
     "RED"    => "Fear"
     => "N/A"
 
@@ -558,7 +558,7 @@ vmrDashboardColor = switch vmrDashboardState
     "BLUE"   => vmrBlueBg
     "YELLOW" => vmrYellowBg
     "AMBER"  => vmrAmberBg
-    "ORANGE" => vmrOrangeBg
+    "PURPLE" => vmrPurpleBg
     "RED"    => vmrRedBg
     => vmrGrayBg
 
@@ -623,7 +623,7 @@ divergenceText =
 
 divergenceColor =
      complacencyTrap or backwardation ? vmrRedBg :
-     vixFallingButVvixHot             ? vmrOrangeBg :
+     vixFallingButVvixHot             ? vmrPurpleBg :
      backwardationResolved            ? vmrBlueBg :
      allClear                         ? vmrGreenBg :
      vmrGrayBg
@@ -648,7 +648,7 @@ f_playbook(_state, _divergence) =>
         rule := "Neutral tape, 1/2 positions on new entries; \n wait for follow-through before being aggressive."
     else if _state == "AMBER"
         rule := "Caution! Test only the best setups; \n protect open profits."
-    else if _state == "ORANGE"
+    else if _state == "PURPLE"
         rule := "Defensive posture, \n reduce heat and avoid weak breakouts."
     else if _state == "RED"
         rule := "Protect capital, \n build watchlists for the recovery."
@@ -669,7 +669,7 @@ f_valueText(_x, _format) =>
     na(_x) ? "N/A" : str.tostring(_x, _format)
 
 f_scoreColor(_score) =>
-    na(_score) ? vmrGrayBg : _score >= 75.0 ? vmrGreenBg : _score >= 65.0 ? vmrBlueBg : _score >= 55.0 ? vmrYellowBg : _score >= 45.0 ? vmrAmberBg : _score >= 30.0 ? vmrOrangeBg : vmrRedBg
+    na(_score) ? vmrGrayBg : _score >= 75.0 ? vmrGreenBg : _score >= 65.0 ? vmrBlueBg : _score >= 55.0 ? vmrYellowBg : _score >= 45.0 ? vmrAmberBg : _score >= 30.0 ? vmrPurpleBg : vmrRedBg
 
 f_textColorForScore(_score) =>
     not na(_score) and _score >= 55.0 and _score < 65.0 ? color.black : color.white
@@ -727,7 +727,7 @@ if showTable and barstate.islast
     table.cell(dash, 2, 3, siLabel + " " + str.tostring(mccSummation, "#.##") + "\nEMA " + str.tostring(mccMsiEma, "#.##") + "\n" + moLabel + " " + str.tostring(mccOsc, "#.##") + "\nA/D " + str.tostring(advBreadth, "#.##") + "/" + str.tostring(decBreadth, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 3, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 4, healthSymbol + " above rising 5D EMA", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 4, healthSymbol + " > ↑ 5D EMA", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 1, 4, f_yesNo(qqqeAboveRising5), bgcolor=f_yesNoColor(qqqeAboveRising5), text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 2, 4, "Close " + str.tostring(dClose, "#.##") + "\n5D " + str.tostring(dSma5, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 4, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
@@ -742,7 +742,7 @@ if showTable and barstate.islast
     table.cell(dash, 2, 6, "10W " + str.tostring(wSma10, "#.##") + "\n20W " + str.tostring(wSma20, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 6, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 7, "Secondary: " + moLabel + " not overbought", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 7, "2ndry: " + moLabel + " not overbought", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 1, 7, f_yesNo(mccOscOk), bgcolor=f_yesNoColor(mccOscOk), text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 2, 7, "Threshold " + str.tostring(oscOverboughtLevel, "#.##"), bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 7, "", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
