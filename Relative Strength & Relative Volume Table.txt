@@ -1,5 +1,6 @@
 // By @oratnek_ill https://www.tradingview.com/v/JSu8Nmb4/
 // Relative Volume is added with sort option, RVol values are colored based on today's close ≥ or < yesterday's close.
+// Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 //@version=6
 indicator(title = 'Relative Strength Table', shorttitle = 'RS Table', overlay = false, dynamic_requests = true)
 
