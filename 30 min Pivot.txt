@@ -1,0 +1,18 @@
+// Inspired by @1ChartMaster https://x.com/1ChartMaster/status/2053625926181593509
+//@version=5
+indicator("30 min Pivot", shorttitle = '30minPiv', overlay=true)
+
+len = input.int(20, minval=1, title="Length")
+src = input.source(close, title="Source")
+out = ta.ema(src, len)
+tf = input.timeframe(title="Timeframe", defval="30")
+s = request.security(syminfo.tickerid, tf, out, gaps=barmerge.gaps_on)
+priceto30min = math.abs(close - s)/close
+is30min = timeframe.isintraday and timeframe.multiplier == 30
+cond1 =  priceto30min < 0.05 and open < s and close > open and close > open[2] and close > close[1] and open[2] > close[2] and close[2] < close[1] and open[1] < close[1] and open[3] > close[3] and close[3] > close[2] and close > open[3]
+cond2 = open[3] < close [3] and open [2] < close[2] and open[1] < close[1] and high[2] < high[3] and high[1] < high[3] and low[2] > low[3] and low[1] > low[3] and close > close [1] and close > close[2] and close > close[3] and high < high[3]
+signal = is30min and (cond1 or cond2)
+
+plot(s, color = color.aqua, linewidth=1, display = display.all -display.price_scale -display.status_line)
+plotshape(signal, title="X on 30m signal", style=shape.xcross, location=location.abovebar, size=size.tiny, color=color.blue, display = display.all-display.price_scale-display.status_line)
+alertcondition(signal, "30m X Signal", "30m condition met (X plotted above bar).")
