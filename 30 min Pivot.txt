@@ -1,4 +1,5 @@
 // Inspired by @1ChartMaster https://x.com/1ChartMaster/status/2053625926181593509
+// Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 //@version=5
 indicator("30 min Pivot", shorttitle = '30minPiv', overlay=true)
 
