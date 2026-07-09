@@ -10,10 +10,10 @@ indicator("Relative Robustness Rotation", shorttitle="RRR", precision=2)
 
 // Inputs
 refSymbol = input.symbol("SPY", "Reference Symbol")
-rsLen = input.int(10, "RS smoothing length", minval=2)
+rsLen = input.int(15, "RS smoothing length", minval=2)
 ratioNormLen = input.int(21, "RS-Ratio normalization length", minval=5)
-momLen = input.int(4, "RS-Momentum fast length", minval=2)
-momNormLen = input.int(10, "RS-Momentum normalization length", minval=3)
+momLen = input.int(8, "RS-Momentum fast length", minval=2)
+momNormLen = input.int(15, "RS-Momentum normalization length", minval=3)
 showRawRS = input.bool(false, "Show raw relative strength")
 showTable = input.bool(true, "Show state table")
 
