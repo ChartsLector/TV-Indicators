@@ -8,7 +8,7 @@
 
 indicator("Relative Robustness Rotation", shorttitle="RRR", precision=2)
 
-// Inputs
+// Inputs, for shorter swing trades you can use 10, 21, 5, 10 rather than 15, 21, 8, 15.
 refSymbol = input.symbol("SPY", "Reference Symbol")
 rsLen = input.int(15, "RS smoothing length", minval=2)
 ratioNormLen = input.int(21, "RS-Ratio normalization length", minval=5)
