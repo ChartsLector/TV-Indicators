@@ -3,31 +3,185 @@
 // but the “sigma” zones should be treated as model-based standardized landmarks, not "guaranteed" empirical probabilities or trading signals.
 // Therefore instead of assuming RSI(14) = universal 70/30 behavior, RSI is transformed into logit space;
 // its own rolling distribution is estimated then converted to an empirical z-score. Then the calibrated zones are mapped back onto the usual 0–100 RSI scale.
+// Newer Version has "Structural Central Line" is added to evaluate the trend. The fast center follows the tactical RSI regime. The slow center provides the structural reference. Residual sigma is estimated independently for more stability. 
 // Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 //@version=6
-indicator("Calibrated RSI Position Zones", shorttitle="C-RSI Zones", overlay=false, precision=2, max_labels_count=50)
+indicator("Calibrated RSI Position Zones", shorttitle="C-RSI Zones", overlay=false, precision=2)
 
 //────────────────────────────────────────────────────────────────────
-// Inputs
+// Core inputs
 //────────────────────────────────────────────────────────────────────
-src          = input.source(close, "Source")
-rsiLen       = input.int(14, "RSI Length", minval=2)
-calLen       = input.int(252, "Calibration Window", minval=10)
-smoothLen    = input.int(3, "Logit Smoothing", minval=1)
+src       = input.source(close, "Source", group="Core")
+rsiLen    = input.int(14, "RSI Length", minval=2, group="Core")
+smoothLen = input.int(3, "Logit Smoothing", minval=1, group="Core")
 
-zInner       = input.float(1.00, "Inner Zone z", step=0.10)
-zOuter       = input.float(2.00, "Outer Zone z", step=0.10)
-zExtreme     = input.float(2.75, "Extreme Zone z", step=0.10)
 
-trendLen     = input.int(200, "Trend EMA Length", minval=20)
-trendSlopeN  = input.int(10, "Trend Slope Lookback", minval=1)
+fastCenterLen = input.int(
+     42,
+     "Fast Center Length",
+     minval=10,
+     group="Multi-Horizon Calibration"
+)
 
-atrLen       = input.int(14, "ATR Length", minval=2)
-volRankLen   = input.int(252, "Volatility Rank Window", minval=50)
+slowCenterLen = input.int(
+     126,
+     "Structural Center Length",
+     minval=30,
+     group="Multi-Horizon Calibration"
+)
 
-showSignals  = input.bool(true, "Show Context Signals")
-showTable    = input.bool(true, "Show Regime Table")
-showBg        = input.bool(true, "Shade Extreme Background")
+sigmaLen = input.int(
+     63,
+     "Tactical Residual Sigma Length",
+     minval=20,
+     group="Multi-Horizon Calibration"
+)
+
+rankLen = input.int(
+     126,
+     "Tactical z Percentile Length",
+     minval=50,
+     group="Multi-Horizon Calibration"
+)
+
+regimeThreshold = input.float(
+     0.10,
+     "Momentum Regime Deadband (sigma)",
+     minval=0.0,
+     step=0.01,
+     group="Multi-Horizon Calibration"
+)
+
+//────────────────────────────────────────────────────────────────────
+// Zone inputs
+//────────────────────────────────────────────────────────────────────
+zInner = input.float(
+     1.00,
+     "Inner Zone z",
+     step=0.10,
+     group="Zones"
+)
+
+zOuter = input.float(
+     2.00,
+     "Outer Zone z",
+     step=0.10,
+     group="Zones"
+)
+
+zExtreme = input.float(
+     2.75,
+     "Extreme Zone z",
+     step=0.10,
+     group="Zones"
+)
+
+//────────────────────────────────────────────────────────────────────
+// Center-slope inputs
+//────────────────────────────────────────────────────────────────────
+centerSlopeLen = input.int(
+     10,
+     "Center Slope Lookback",
+     minval=3,
+     group="Center Slope"
+)
+
+centerSlopeSmoothLen = input.int(
+     3,
+     "Center Slope Smoothing",
+     minval=1,
+     group="Center Slope"
+)
+
+centerSlopeThreshold = input.float(
+     0.05,
+     "Center Slope Deadband (sigma/window)",
+     minval=0.0,
+     step=0.01,
+     group="Center Slope"
+)
+
+//────────────────────────────────────────────────────────────────────
+// Price-trend and volatility inputs
+//────────────────────────────────────────────────────────────────────
+trendLen = input.int(
+     200,
+     "Trend EMA Length",
+     minval=20,
+     group="Price Trend"
+)
+
+trendSlopeN = input.int(
+     10,
+     "Trend Slope Lookback",
+     minval=1,
+     group="Price Trend"
+)
+
+atrLen = input.int(
+     14,
+     "ATR Length",
+     minval=2,
+     group="Volatility"
+)
+
+volRankLen = input.int(
+     252,
+     "Volatility Rank Window",
+     minval=50,
+     group="Volatility"
+)
+
+//────────────────────────────────────────────────────────────────────
+// Signal-filter inputs
+//────────────────────────────────────────────────────────────────────
+useTailConfirmation = input.bool(
+     true,
+     "Require Empirical Tail Confirmation",
+     group="Signal Evaluation"
+)
+
+lowerTailPercentile = input.float(
+     10.0,
+     "Lower Tail Percentile",
+     minval=0.0,
+     maxval=50.0,
+     step=1.0,
+     group="Signal Evaluation"
+)
+
+upperTailPercentile = input.float(
+     90.0,
+     "Upper Tail Percentile",
+     minval=50.0,
+     maxval=100.0,
+     step=1.0,
+     group="Signal Evaluation"
+)
+
+showSignals = input.bool(
+     true,
+     "Show Classified Context Signals",
+     group="Display"
+)
+
+showTable = input.bool(
+     true,
+     "Show Regime Table",
+     group="Display"
+)
+
+showBg = input.bool(
+     true,
+     "Shade Extreme Background",
+     group="Display"
+)
+
+showStructuralCenter = input.bool(
+     true,
+     "Show Line of Structural Center",
+     group="Display"
+)
 
 //────────────────────────────────────────────────────────────────────
 // Table controls
@@ -35,21 +189,28 @@ showBg        = input.bool(true, "Shade Extreme Background")
 tableSizeInput = input.string(
      "Small",
      "Table Size",
-     options = ["Tiny", "Small", "Normal", "Large", "Huge"],
-     group = "Table Settings"
+     options=["Tiny", "Small", "Normal", "Large", "Huge"],
+     group="Table Settings"
 )
 
 tablePosInput = input.string(
      "Top Right",
      "Table Position",
-     options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right", "Middle Left"],
-     group = "Table Settings"
+     options=[
+          "Top Right",
+          "Top Left",
+          "Bottom Right",
+          "Bottom Left",
+          "Middle Right",
+          "Middle Left"
+     ],
+     group="Table Settings"
 )
 
 metricTextColor = input.color(
      color.white,
      "Metric Column Text Color",
-     group = "Table Settings"
+     group="Table Settings"
 )
 
 //────────────────────────────────────────────────────────────────────
@@ -66,129 +227,577 @@ f_rsi_from_logit(x) =>
     100.0 / (1.0 + math.exp(-x))
 
 //────────────────────────────────────────────────────────────────────
-// Core RSI → logit → empirical z-score
+// RSI → logit
 //────────────────────────────────────────────────────────────────────
 rsiRaw   = ta.rsi(src, rsiLen)
 logitRsi = f_logit_from_rsi(rsiRaw)
 logitSm  = ta.ema(logitRsi, smoothLen)
 
-// Empirical calibration in logit space.
-// This is the mature step: we do not assume the theoretical RSI distribution.
-mu       = ta.ema(logitSm, calLen)
-sigma    = ta.stdev(logitSm, calLen)
-sigmaOK  = sigma > 0.000001 ? sigma : na
+//────────────────────────────────────────────────────────────────────
+// Multi-horizon empirical calibration
+//────────────────────────────────────────────────────────────────────
+// Fast tactical center and slow structural center.
+muFast = ta.ema(logitSm, fastCenterLen)
+muSlow = ta.ema(logitSm, slowCenterLen)
 
-z        = (logitSm - mu) / sigmaOK
-zSignal  = ta.ema(z, 3)
-zRank    = ta.percentrank(z, calLen)
+// Estimate tactical dispersion from residuals around the SAME EMA
+// center used in the numerator. This avoids mixing an EMA center with
+// a standard deviation calculated around a different rolling mean.
+fastResidual = logitSm - muFast
+fastVariance = ta.ema(fastResidual * fastResidual, sigmaLen)
+sigmaFast    = math.sqrt(math.max(fastVariance, 0.000001))
 
-// Map empirical z-zones back to RSI scale.
-center   = f_rsi_from_logit(mu)
+// Tactical standardized displacement.
+z       = fastResidual / sigmaFast
+zSignal = ta.ema(z, 3)
+zRank   = ta.percentrank(z, rankLen)
 
-upper1   = f_rsi_from_logit(mu + zInner   * sigmaOK)
-lower1   = f_rsi_from_logit(mu - zInner   * sigmaOK)
+// Structural residual dispersion provides a stable normalization
+// reference for regime separation and center slope.
+slowResidual = logitSm - muSlow
+slowVariance = ta.ema(slowResidual * slowResidual, slowCenterLen)
+sigmaSlow    = math.sqrt(math.max(slowVariance, 0.000001))
 
-upper2   = f_rsi_from_logit(mu + zOuter   * sigmaOK)
-lower2   = f_rsi_from_logit(mu - zOuter   * sigmaOK)
+// Fast equilibrium relative to the structural equilibrium.
+regimeZ = (muFast - muSlow) / sigmaSlow
 
-upper3   = f_rsi_from_logit(mu + zExtreme * sigmaOK)
-lower3   = f_rsi_from_logit(mu - zExtreme * sigmaOK)
+bullishMomentumRegime = regimeZ > regimeThreshold
+bearishMomentumRegime = regimeZ < -regimeThreshold
+neutralMomentumRegime = not bullishMomentumRegime and not bearishMomentumRegime
+
+momentumRegimeText =
+     bullishMomentumRegime ? "Bullish" :
+     bearishMomentumRegime ? "Bearish" :
+                             "Neutral / Transition"
 
 //────────────────────────────────────────────────────────────────────
-// Trend and volatility context
+// Yellow-center slope
+//────────────────────────────────────────────────────────────────────
+// Regression slope of muFast in logit space.
+// Units: logit-RSI units per bar.
+muSlopePerBar =
+     ta.linreg(muFast, centerSlopeLen, 0) -
+     ta.linreg(muFast, centerSlopeLen, 1)
+
+// Convert the fitted per-bar slope to fitted movement across the
+// complete slope window, then normalize by structural sigma.
+// Units: structural sigma per slope window.
+centerSlopeScoreRaw =
+     muSlopePerBar * (centerSlopeLen - 1) / sigmaSlow
+
+centerSlopeScore =
+     ta.ema(centerSlopeScoreRaw, centerSlopeSmoothLen)
+
+centerRising  = centerSlopeScore > centerSlopeThreshold
+centerFalling = centerSlopeScore < -centerSlopeThreshold
+centerFlat    = not centerRising and not centerFalling
+
+centerDirectionText =
+     centerRising  ? "Rising" :
+     centerFalling ? "Falling" :
+                     "Flat"
+
+// Useful secondary diagnostics.
+centerSlopeAcceleration = centerSlopeScore - centerSlopeScore[1]
+bullishCenterTurn       = ta.crossover(centerSlopeScore, 0.0)
+bearishCenterTurn       = ta.crossunder(centerSlopeScore, 0.0)
+
+//────────────────────────────────────────────────────────────────────
+// Map calibrated values back to the RSI scale
+//────────────────────────────────────────────────────────────────────
+centerFast = f_rsi_from_logit(muFast)
+centerSlow = f_rsi_from_logit(muSlow)
+
+upper1 = f_rsi_from_logit(muFast + zInner * sigmaFast)
+lower1 = f_rsi_from_logit(muFast - zInner * sigmaFast)
+
+upper2 = f_rsi_from_logit(muFast + zOuter * sigmaFast)
+lower2 = f_rsi_from_logit(muFast - zOuter * sigmaFast)
+
+upper3 = f_rsi_from_logit(muFast + zExtreme * sigmaFast)
+lower3 = f_rsi_from_logit(muFast - zExtreme * sigmaFast)
+
+// Visible yellow-line slope in RSI points per bar.
+// This is for human interpretation; centerSlopeScore controls evaluation.
+centerRsiSlopePerBar =
+     ta.linreg(centerFast, centerSlopeLen, 0) -
+     ta.linreg(centerFast, centerSlopeLen, 1)
+
+//────────────────────────────────────────────────────────────────────
+// Price-trend and volatility context
 //────────────────────────────────────────────────────────────────────
 trendEma   = ta.ema(src, trendLen)
 trendSlope = trendEma - trendEma[trendSlopeN]
 
 trendState =
-     src > trendEma and trendSlope > 0 ?  1 :
-     src < trendEma and trendSlope < 0 ? -1 : 0
+     src > trendEma and trendSlope > 0 ? 1 :
+     src < trendEma and trendSlope < 0 ? -1 :
+                                         0
 
-trendText = trendState ==  1 ? "Uptrend" : trendState == -1 ? "Downtrend" : "Range / Transition"
+trendText = trendState == 1  ? "Uptrend" : trendState == -1 ? "Downtrend" : "Range / Transition"
 
-atrPct     = ta.atr(atrLen) / src
-volRank    = ta.percentrank(atrPct, volRankLen)
+atrPct  = ta.atr(atrLen) / src
+volRank = ta.percentrank(atrPct, volRankLen)
 
-volText =
-     volRank >= 80 ? "High Volatility" :
-     volRank <= 20 ? "Low Volatility"  :
-                     "Normal Volatility"
+volText = volRank >= 80 ? "High Volatility" : volRank <= 20 ? "Low Volatility" : "Normal Volatility"
 
 //────────────────────────────────────────────────────────────────────
-// Context signals, not automatic buy/sell signals
+// Classified context signals
 //────────────────────────────────────────────────────────────────────
 statOversold   = z < -zOuter
-statOverbought = z >  zOuter
+statOverbought = z > zOuter
 
-longContext  = showSignals and trendState >= 0 and ta.crossover(z, -zOuter)
-shortContext = showSignals and trendState <= 0 and ta.crossunder(z, zOuter)
-
-extremeHigh = z >  zExtreme
+extremeHigh = z > zExtreme
 extremeLow  = z < -zExtreme
+
+// Re-entry is the tactical event. Empirical percentile confirmation
+// verifies that the preceding observation was also in an actual tail.
+longReentryRaw  = ta.crossover(z, -zOuter)
+shortReentryRaw = ta.crossunder(z, zOuter)
+
+longTailConfirmed =
+     not useTailConfirmation or
+     (not na(zRank[1]) and zRank[1] <= lowerTailPercentile)
+
+shortTailConfirmed =
+     not useTailConfirmation or
+     (not na(zRank[1]) and zRank[1] >= upperTailPercentile)
+
+longReentry =
+     showSignals and
+     longReentryRaw and
+     longTailConfirmed and
+     zSignal > zSignal[1]
+
+shortReentry =
+     showSignals and
+     shortReentryRaw and
+     shortTailConfirmed and
+     zSignal < zSignal[1]
+
+// 1) Continuation: price trend, momentum regime, and center slope agree.
+strongLongContinuation =
+     longReentry and
+     trendState == 1 and
+     bullishMomentumRegime and
+     centerRising
+
+strongShortContinuation =
+     shortReentry and
+     trendState == -1 and
+     bearishMomentumRegime and
+     centerFalling
+
+// 2) Early reversal: structural regime is still adverse, but the fast
+// center has already turned in the direction of the re-entry.
+earlyLongReversal =
+     longReentry and
+     not strongLongContinuation and
+     bearishMomentumRegime and
+     centerRising
+
+earlyShortReversal =
+     shortReentry and
+     not strongShortContinuation and
+     bullishMomentumRegime and
+     centerFalling
+
+// 3) Mean reversion: not a continuation or early reversal, but neither
+// price context nor center direction is strongly hostile.
+meanReversionLong =
+     longReentry and
+     not strongLongContinuation and
+     not earlyLongReversal and
+     trendState >= 0 and
+     not centerFalling
+
+meanReversionShort =
+     shortReentry and
+     not strongShortContinuation and
+     not earlyShortReversal and
+     trendState <= 0 and
+     not centerRising
+
+// 4) Countertrend: all remaining valid re-entries.
+countertrendLong =
+     longReentry and
+     not strongLongContinuation and
+     not earlyLongReversal and
+     not meanReversionLong
+
+countertrendShort =
+     shortReentry and
+     not strongShortContinuation and
+     not earlyShortReversal and
+     not meanReversionShort
+
+signalText =
+     strongLongContinuation  ? "Strong Long Continuation" :
+     strongShortContinuation ? "Strong Short Continuation" :
+     earlyLongReversal       ? "Early Bullish Reversal" :
+     earlyShortReversal      ? "Early Bearish Reversal" :
+     meanReversionLong       ? "Long Mean Reversion" :
+     meanReversionShort      ? "Short Mean Reversion" :
+     countertrendLong        ? "Countertrend Long Bounce" :
+     countertrendShort       ? "Countertrend Short Pullback" :
+                               "No new re-entry"
+
+signalTextColor =
+     strongLongContinuation  ? color.lime :
+     strongShortContinuation ? color.red :
+     earlyLongReversal       ? color.aqua :
+     earlyShortReversal      ? color.fuchsia :
+     meanReversionLong       ? color.teal :
+     meanReversionShort      ? color.orange :
+     countertrendLong        ? color.silver :
+     countertrendShort       ? color.silver :
+                               color.white
 
 //────────────────────────────────────────────────────────────────────
 // Plotting
 //────────────────────────────────────────────────────────────────────
 rsiColor =
-     z >  zExtreme ? color.rgb(180, 0, 0) :
-     z >  zOuter   ? color.red :
-     z >  zInner   ? color.orange :
+     z > zExtreme  ? color.rgb(180, 0, 0) :
+     z > zOuter    ? color.red :
+     z > zInner    ? color.orange :
      z < -zExtreme ? color.rgb(0, 120, 0) :
      z < -zOuter   ? color.lime :
      z < -zInner   ? color.teal :
                      color.white
 
-pRsi    = plot(rsiRaw, "RSI", color=rsiColor, linewidth=2)
-pCenter = plot(center, "Empirical Center", color=color.yellow, linewidth=2)
+pRsi = plot(
+     rsiRaw,
+     "RSI",
+     color=rsiColor,
+     linewidth=2
+)
 
-pU1 = plot(upper1, "+Inner Zone", color=color.new(color.orange, 25))
-pL1 = plot(lower1, "-Inner Zone", color=color.new(color.teal, 25))
+pCenterFast = plot(
+     centerFast,
+     "Fast Empirical Center",
+     color=color.yellow,
+     linewidth=2
+)
 
-pU2 = plot(upper2, "+Outer Zone", color=color.new(color.red, 10), linewidth=2)
-pL2 = plot(lower2, "-Outer Zone", color=color.new(color.lime, 10), linewidth=2)
+plot(
+     showStructuralCenter ? centerSlow : na,
+     "Structural Empirical Center",
+     color=color.new(color.orange, 35),
+     linewidth=2, linestyle=plot.linestyle_dotted
+)
 
-pU3 = plot(upper3, "+Extreme Zone", color=color.new(color.red, 45), style=plot.style_linebr)
-pL3 = plot(lower3, "-Extreme Zone", color=color.new(color.lime, 45), style=plot.style_linebr)
+pU1 = plot(
+     upper1,
+     "+Inner Zone",
+     color=color.new(color.orange, 25)
+)
 
-fill(pU1, pL1, color=color.new(color.white, 92), title="Central Calibration Zone")
-fill(pU2, pU1, color=color.new(color.red, 92), title="Upper Outer Band")
-fill(pL1, pL2, color=color.new(color.green, 92), title="Lower Outer Band")
-fill(pU3, pU2, color=color.new(color.red, 88), title="Upper Extreme Band")
-fill(pL2, pL3, color=color.new(color.green, 88), title="Lower Extreme Band")
+pL1 = plot(
+     lower1,
+     "-Inner Zone",
+     color=color.new(color.teal, 25)
+)
 
-hline(50, "Classical RSI 50", color=color.new(color.white, 70))
-hline(70, "Classical RSI 70", color=color.new(color.red, 80))
-hline(30, "Classical RSI 30", color=color.new(color.green, 80))
+pU2 = plot(
+     upper2,
+     "+Outer Zone",
+     color=color.new(color.red, 10),
+     linewidth=2
+)
 
-plotshape(longContext, title="Long Context Re-entry", style=shape.triangleup,
-     location=location.bottom, color=color.lime, size=size.tiny, text="L")
+pL2 = plot(
+     lower2,
+     "-Outer Zone",
+     color=color.new(color.lime, 10),
+     linewidth=2
+)
 
-plotshape(shortContext, title="Short Context Re-entry", style=shape.triangledown,
-     location=location.top, color=color.red, size=size.tiny, text="S")
+pU3 = plot(
+     upper3,
+     "+Extreme Zone",
+     color=color.new(color.red, 45),
+     style=plot.style_linebr
+)
 
-bgcolor(showBg and extremeHigh ? color.new(color.red, 88) :
-       showBg and extremeLow  ? color.new(color.green, 88) :
-       na)
+pL3 = plot(
+     lower3,
+     "-Extreme Zone",
+     color=color.new(color.lime, 45),
+     style=plot.style_linebr
+)
 
-// Hidden diagnostic plots for data-window inspection.
-plot(z, "Empirical Logit z-score", display=display.data_window)
-plot(zRank, "z Percent Rank", display=display.data_window)
-plot(volRank, "ATR Percent Rank", display=display.data_window)
+fill(
+     pU1,
+     pL1,
+     color=color.new(color.white, 92),
+     title="Central Calibration Zone"
+)
+
+fill(
+     pU2,
+     pU1,
+     color=color.new(color.red, 92),
+     title="Upper Outer Band"
+)
+
+fill(
+     pL1,
+     pL2,
+     color=color.new(color.green, 92),
+     title="Lower Outer Band"
+)
+
+fill(
+     pU3,
+     pU2,
+     color=color.new(color.red, 88),
+     title="Upper Extreme Band"
+)
+
+fill(
+     pL2,
+     pL3,
+     color=color.new(color.green, 88),
+     title="Lower Extreme Band"
+)
+
+hline(
+     50,
+     "Classical RSI 50",
+     color=color.new(color.white, 70)
+)
+
+hline(
+     70,
+     "Classical RSI 70",
+     color=color.new(color.red, 80)
+)
+
+hline(
+     30,
+     "Classical RSI 30",
+     color=color.new(color.green, 80)
+)
+
+// Continuation signals.
+plotshape(
+     strongLongContinuation,
+     title="Strong Long Continuation",
+     style=shape.triangleup,
+     location=location.bottom,
+     color=color.lime,
+     size=size.tiny,
+     text="LC"
+)
+
+plotshape(
+     strongShortContinuation,
+     title="Strong Short Continuation",
+     style=shape.triangledown,
+     location=location.top,
+     color=color.red,
+     size=size.tiny,
+     text="SC"
+)
+
+// Early reversals.
+plotshape(
+     earlyLongReversal,
+     title="Early Bullish Reversal",
+     style=shape.triangleup,
+     location=location.bottom,
+     color=color.aqua,
+     size=size.tiny,
+     text="LR"
+)
+
+plotshape(
+     earlyShortReversal,
+     title="Early Bearish Reversal",
+     style=shape.triangledown,
+     location=location.top,
+     color=color.fuchsia,
+     size=size.tiny,
+     text="SR"
+)
+
+// Mean reversion.
+plotshape(
+     meanReversionLong,
+     title="Long Mean Reversion",
+     style=shape.circle,
+     location=location.bottom,
+     color=color.teal,
+     size=size.tiny,
+     text="LM"
+)
+
+plotshape(
+     meanReversionShort,
+     title="Short Mean Reversion",
+     style=shape.circle,
+     location=location.top,
+     color=color.orange,
+     size=size.tiny,
+     text="SM"
+)
+
+// Countertrend signals.
+plotshape(
+     countertrendLong,
+     title="Countertrend Long Bounce",
+     style=shape.diamond,
+     location=location.bottom,
+     color=color.silver,
+     size=size.tiny,
+     text="LX"
+)
+
+plotshape(
+     countertrendShort,
+     title="Countertrend Short Pullback",
+     style=shape.diamond,
+     location=location.top,
+     color=color.silver,
+     size=size.tiny,
+     text="SX"
+)
+
+bgcolor(
+     showBg and extremeHigh ? color.new(color.red, 88) :
+     showBg and extremeLow  ? color.new(color.green, 88) :
+                              na
+)
+
+// Hidden diagnostics for Data Window inspection.
+plot(
+     z,
+     "Tactical Logit z-score",
+     display=display.data_window
+)
+
+plot(
+     zSignal,
+     "Smoothed Tactical z",
+     display=display.data_window
+)
+
+plot(
+     zRank,
+     "Tactical z Percentile",
+     display=display.data_window
+)
+
+plot(
+     regimeZ,
+     "Momentum Regime z",
+     display=display.data_window
+)
+
+plot(
+     centerSlopeScore,
+     "Center Slope Score",
+     display=display.data_window
+)
+
+plot(
+     centerSlopeAcceleration,
+     "Center Slope Acceleration",
+     display=display.data_window
+)
+
+plot(
+     centerRsiSlopePerBar,
+     "Center RSI Slope per Bar",
+     display=display.data_window
+)
+
+plot(
+     bullishCenterTurn ? 1.0 : bearishCenterTurn ? -1.0 : 0.0,
+     "Center Zero-Cross Turn",
+     display=display.data_window
+)
+
+plot(
+     volRank,
+     "ATR Percent Rank",
+     display=display.data_window
+)
 
 //────────────────────────────────────────────────────────────────────
 // Alerts
 //────────────────────────────────────────────────────────────────────
-alertcondition(longContext, "Long Context Re-entry",
-     "Q-RSI: RSI re-entered from statistically oversold territory in a non-bearish regime.")
+alertcondition(
+     strongLongContinuation,
+     "Strong Long Continuation",
+     "MH C-RSI: Lower-tail re-entry in an uptrend, bullish momentum regime, and rising tactical center."
+)
 
-alertcondition(shortContext, "Short Context Re-entry",
-     "Q-RSI: RSI re-entered from statistically overbought territory in a non-bullish regime.")
+alertcondition(
+     strongShortContinuation,
+     "Strong Short Continuation",
+     "MH C-RSI: Upper-tail re-entry in a downtrend, bearish momentum regime, and falling tactical center."
+)
 
-alertcondition(extremeHigh, "Extreme Positive RSI Displacement",
-     "Q-RSI: RSI is in an empirically extreme positive displacement zone.")
+alertcondition(
+     earlyLongReversal,
+     "Early Bullish Reversal",
+     "MH C-RSI: Lower-tail re-entry while the structural momentum regime remains bearish but the tactical center is rising."
+)
 
-alertcondition(extremeLow, "Extreme Negative RSI Displacement",
-     "Q-RSI: RSI is in an empirically extreme negative displacement zone.")
+alertcondition(
+     earlyShortReversal,
+     "Early Bearish Reversal",
+     "MH C-RSI: Upper-tail re-entry while the structural momentum regime remains bullish but the tactical center is falling."
+)
+
+alertcondition(
+     meanReversionLong,
+     "Long Mean Reversion",
+     "MH C-RSI: Lower-tail re-entry in a non-hostile price and center context."
+)
+
+alertcondition(
+     meanReversionShort,
+     "Short Mean Reversion",
+     "MH C-RSI: Upper-tail re-entry in a non-hostile price and center context."
+)
+
+alertcondition(
+     countertrendLong,
+     "Countertrend Long Bounce",
+     "MH C-RSI: Lower-tail re-entry against the prevailing context."
+)
+
+alertcondition(
+     countertrendShort,
+     "Countertrend Short Pullback",
+     "MH C-RSI: Upper-tail re-entry against the prevailing context."
+)
+
+alertcondition(
+     bullishCenterTurn,
+     "Bullish Center-Slope Turn",
+     "MH C-RSI: The normalized tactical-center slope crossed above zero."
+)
+
+alertcondition(
+     bearishCenterTurn,
+     "Bearish Center-Slope Turn",
+     "MH C-RSI: The normalized tactical-center slope crossed below zero."
+)
+
+alertcondition(
+     extremeHigh,
+     "Extreme Positive RSI Displacement",
+     "MH C-RSI: RSI is in an empirically extreme positive displacement zone."
+)
+
+alertcondition(
+     extremeLow,
+     "Extreme Negative RSI Displacement",
+     "MH C-RSI: RSI is in an empirically extreme negative displacement zone."
+)
 
 //────────────────────────────────────────────────────────────────────
 // Regime table
@@ -208,55 +817,165 @@ tablePosition = switch tablePosInput
     "Middle Right" => position.middle_right
     "Middle Left"  => position.middle_left
 
-var table t = table.new(tablePosition, 2, 6, border_width=1)
+var table t = table.new(
+     tablePosition,
+     2,
+     11,
+     border_width=1
+)
 
 if showTable and barstate.islast
-    table.cell(t, 0, 0, "Metric",
-         text_color=color.white,
-         bgcolor=color.new(color.black, 0),
-         text_size=tableTextSize)
-
-    table.cell(t, 1, 0, "Value",
-         text_color=color.white,
-         bgcolor=color.new(color.black, 0),
-         text_size=tableTextSize)
-
-    table.cell(t, 0, 1, "Trend",
+    table.cell(
+         t,
+         0,
+         0,
+         "Price Trend",
          text_color=metricTextColor,
-         text_size=tableTextSize)
+         text_size=tableTextSize
+    )
 
-    table.cell(t, 1, 1, trendText,
-         text_color = trendState == 1 ? color.lime : trendState == -1 ? color.red : color.orange,
-         text_size=tableTextSize)
+    table.cell(
+         t,
+         1,
+         0,
+         trendText,
+         text_color=trendState == 1 ? color.lime : trendState == -1 ? color.red : color.orange,
+         text_size=tableTextSize
+    )
 
-    table.cell(t, 0, 2, "Vol Regime",
+    table.cell(
+         t,
+         0,
+         1,
+         "Vol Regime",
          text_color=metricTextColor,
-         text_size=tableTextSize)
+         text_size=tableTextSize
+    )
 
-    table.cell(t, 1, 2, volText,
-         text_color = volRank >= 80 ? color.red : volRank <= 20 ? color.teal : color.white,
-         text_size=tableTextSize)
+    table.cell(
+         t,
+         1,
+         1,
+         volText,
+         text_color=volRank >= 80 ? color.red : volRank <= 20 ? color.teal : color.white,
+         text_size=tableTextSize
+    )
 
-    table.cell(t, 0, 3, "RSI",
+    table.cell(
+         t,
+         0,
+         2,
+         "RSI",
          text_color=metricTextColor,
-         text_size=tableTextSize)
+         text_size=tableTextSize
+    )
 
-    table.cell(t, 1, 3, str.tostring(rsiRaw, "#.##"),
+    table.cell(
+         t,
+         1,
+         2,
+         str.tostring(rsiRaw, "#.##"),
          text_color=rsiColor,
-         text_size=tableTextSize)
+         text_size=tableTextSize
+    )
 
-    table.cell(t, 0, 4, "Logit z",
+    table.cell(
+         t,
+         0,
+         3,
+         "Tactical z",
          text_color=metricTextColor,
-         text_size=tableTextSize)
+         text_size=tableTextSize
+    )
 
-    table.cell(t, 1, 4, str.tostring(z, "#.##"),
-         text_color = z > zOuter ? color.red : z < -zOuter ? color.lime : color.white,
-         text_size=tableTextSize)
+    table.cell(
+         t,
+         1,
+         3,
+         str.tostring(z, "#.##"),
+         text_color=z > zOuter ? color.red : z < -zOuter ? color.lime : color.white,
+         text_size=tableTextSize
+    )
 
-    table.cell(t, 0, 5, "z Percentile",
+    table.cell(
+         t,
+         0,
+         4,
+         "z Percentile",
          text_color=metricTextColor,
-         text_size=tableTextSize)
+         text_size=tableTextSize
+    )
 
-    table.cell(t, 1, 5, str.tostring(zRank, "#.##") + "%",
+    table.cell(
+         t,
+         1,
+         4,
+         str.tostring(zRank, "#.##") + "%",
          text_color=rsiColor,
-         text_size=tableTextSize)
+         text_size=tableTextSize
+    )
+
+    table.cell(
+         t,
+         0,
+         5,
+         "Momentum Regime",
+         text_color=metricTextColor,
+         text_size=tableTextSize
+    )
+
+    table.cell(
+         t,
+         1,
+         5,
+         momentumRegimeText + " (" + str.tostring(regimeZ, "#.##") + ")",
+         text_color=bullishMomentumRegime ? color.lime : bearishMomentumRegime ? color.red : color.orange,
+         text_size=tableTextSize
+    )
+
+    table.cell(
+         t,
+         0,
+         6,
+         "Center Direction",
+         text_color=metricTextColor,
+         text_size=tableTextSize
+    )
+
+    table.cell(
+         t,
+         1,
+         6,
+         centerDirectionText,
+         text_color=centerRising ? color.lime : centerFalling ? color.red : color.orange,
+         text_size=tableTextSize
+    )
+
+    table.cell(
+         t,
+         0,
+         7,
+         "Signal Type",
+         text_color=metricTextColor,
+         text_size=tableTextSize
+    )
+
+    table.cell(
+         t,
+         1,
+         7,
+         signalText,
+         text_color=signalTextColor,
+         text_size=tableTextSize
+    )
+
+    //table.cell(t, 0, 7, "Center Slope",text_color=metricTextColor,text_size=tableTextSize)
+
+    //table.cell(t, 1, 7, str.tostring(centerSlopeScore, "#.###") + " sigma/window",text_color=centerRising ? color.lime : centerFalling ? color.red : color.orange, text_size=tableTextSize)
+
+    //table.cell(t,0, 8, "Center RSI Slope", text_color=metricTextColor, text_size=tableTextSize)
+
+    //table.cell(t, 1, 8, str.tostring(centerRsiSlopePerBar, "#.###") + " pt/bar", text_color=centerRsiSlopePerBar > 0 ? color.lime : centerRsiSlopePerBar < 0 ? color.red : color.orange, text_size=tableTextSize)
+
+if not showTable and barstate.islast
+    table.clear(t, 0, 0, 1, 10)
