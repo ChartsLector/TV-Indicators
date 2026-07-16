@@ -84,6 +84,14 @@ oscOverboughtLevel = input.float(
      group="Market Action Pulse"
 )
 
+mccZScoreLen = input.int(
+     63,
+     "NAMO/NYMO z-score lookback",
+     minval = 20,
+     tooltip = "Number of McClellan-timeframe observations used for the rolling population z-score. Try 63, 126, or 252",
+     group="Market Action Pulse"
+)
+
 tmhShowBackground = input.bool(false, "Tint chart background by Trend dashboard color", group="Market Action Pulse")
 
 tmhConfirmOffset = tmhUseConfirmedBars ? 1 : 0
@@ -104,7 +112,7 @@ dataTimeframe = input.timeframe(
 )
 
 vmrUseConfirmedBars = input.bool(
-     true,
+     false,
      "Use completed volatility bars only",
      tooltip = "ON = uses the previous completed volatility bar. This avoids live-session repainting.",
      group="VIX Mood Ring"
@@ -240,6 +248,14 @@ var float mccSummationPrevState = na
 var float mccMsiEmaState        = na
 var float mccMsiEmaPrevState    = na
 
+// Rolling NAMO/NYMO z-score state. The window advances only when a new
+// McClellan-timeframe observation is processed, so intraday chart bars do not
+// duplicate the same daily oscillator value.
+var array<float> mccOscZWindow = array.new_float()
+var float mccOscZSum           = 0.0
+var float mccOscZSumSq         = 0.0
+var float mccZScoreState       = na
+
 if mccCalcBar and not na(netAdv)
     oldSummation = mccSummationState
     oldMsiEma    = mccMsiEmaState
@@ -255,9 +271,30 @@ if mccCalcBar and not na(netAdv)
     mccSummationState := na(oldSummation) ? mccOscState : oldSummation + mccOscState
     mccMsiEmaState    := na(oldMsiEma) ? mccSummationState : oldMsiEma + msiAlpha * (mccSummationState - oldMsiEma)
 
+    // Add the latest oscillator observation to the rolling z-score window.
+    array.push(mccOscZWindow, mccOscState)
+    mccOscZSum   += mccOscState
+    mccOscZSumSq += mccOscState * mccOscState
+
+    if array.size(mccOscZWindow) > mccZScoreLen
+        removedOsc = array.shift(mccOscZWindow)
+        mccOscZSum   -= removedOsc
+        mccOscZSumSq -= removedOsc * removedOsc
+
+    zCount = array.size(mccOscZWindow)
+
+    if zCount == mccZScoreLen
+        zMean     = mccOscZSum / zCount
+        zVariance = math.max(mccOscZSumSq / zCount - zMean * zMean, 0.0)
+        zStdDev   = math.sqrt(zVariance)
+        mccZScoreState := zStdDev > 0.0 ? (mccOscState - zMean) / zStdDev : na
+    else
+        mccZScoreState := na
+
 mccSummation = mccSummationState
 mccOsc       = mccOscState
 mccMsiEma    = mccMsiEmaState
+mccZScore    = mccZScoreState
 
 mccUptrend =
      not na(mccSummation) and
@@ -345,6 +382,24 @@ f_yesNoColor(_condition) =>
 
 mccStatus = mccUptrend ? "YES" : mccAttempt ? "ATTEMPT" : "NO"
 mccColor  = mccUptrend ? tmhGreenBg : mccAttempt ? tmhAmberBg : tmhRedBg
+
+mccBreadthCondition =
+     na(mccZScore)       ? "N/A"             :
+     mccZScore >= 2.0    ? "++ve Breadth"    :
+     mccZScore >= 1.0    ? "+ve Breadth"     :
+     mccZScore >= -1.0   ? "Neutral Breadth" :
+     mccZScore >= -2.0   ? "-ve Breadth"     :
+     "--ve Breadth"
+
+mccBreadthConditionColor =
+     na(mccZScore)       ? tmhGrayBg   :
+     mccZScore >= 2.0    ? tmhGreenBg  :
+     mccZScore >= 1.0    ? tmhBlueBg   :
+     mccZScore >= -1.0   ? tmhYellowBg :
+     mccZScore >= -2.0   ? tmhPurpleBg :
+     tmhRedBg
+
+mccZScoreText = na(mccZScore) ? "N/A" : (mccZScore > 0.0 ? "+" : "") + str.tostring(mccZScore, "#.##")
 
 tmhTxtOnState = tmhDashboardState == "YELLOW" ? color.black : color.white
 
@@ -684,6 +739,7 @@ plot(tmhDashboardScore, title="Trend Dashboard State Score", display=display.dat
 plot(mccSummation, title="NASI/NYSI", display=display.data_window)
 plot(mccMsiEma, title="NASI/NYSI EMA", display=display.data_window)
 plot(mccOsc, title="NAMO/NYMO", display=display.data_window)
+plot(mccZScore, title="NAMO/NYMO z-Score", display=display.data_window)
 plot(advBreadth, title="Selected Advancing Issues", display=display.data_window)
 plot(decBreadth, title="Selected Declining Issues", display=display.data_window)
 plot(netAdv, title="Normalized Net Adv-Dec", display=display.data_window)
@@ -747,56 +803,61 @@ if showTable and barstate.islast
     table.cell(dash, 2, 7, "Threshold " + str.tostring(oscOverboughtLevel, "#.##"), bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 7, "", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 8, "Exposure rule", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 8, tmhDashboardState, bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 2, 8, exposureRule, bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 8, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 8, moLabel + " z-Score", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 8, mccBreadthCondition, bgcolor=mccBreadthConditionColor, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 8, mccZScoreText, bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 8, "", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+
+    table.cell(dash, 0, 9, "Exposure rule", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 9, tmhDashboardState, bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 2, 9, exposureRule, bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 9, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
 
     // Separator
-    table.cell(dash, 0, 9, "VIX Mood Ring", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 1, 9, moodLabel, bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 2, 9, "Composite", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 3, 9, na(dashboardScore) ? "N/A" : str.tostring(dashboardScore) + "/100", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 0, 10, "VIX Mood Ring", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 1, 10, moodLabel, bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 2, 10, "Composite", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 3, 10, na(dashboardScore) ? "N/A" : str.tostring(dashboardScore) + "/100", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
 
-    table.cell(dash, 0, 10, "Divergence", bgcolor=divergenceColor, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 10, divergenceLabel, bgcolor=divergenceColor, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 2, 10, divergenceText, bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 10, "", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-
-    table.cell(dash, 0, 11, "Playbook", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 1, 11, moodLabel, bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 2, 11, playbook, bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 11, "Divergence", bgcolor=divergenceColor, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 11, divergenceLabel, bgcolor=divergenceColor, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 11, divergenceText, bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 11, "", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 12, "Signal", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 12, "Regime", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 2, 12, "Value", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 12, "Score", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 12, "Playbook", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 1, 12, moodLabel, bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 2, 12, playbook, bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 12, "", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 13, "VIX Level", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 13, f_vixRegime(vix), bgcolor=f_scoreColor(vixScore), text_color=f_textColorForScore(vixScore), text_size=tableTextSize)
-    table.cell(dash, 2, 13, f_valueText(vix, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 13, f_scoreText(vixScore), bgcolor=f_scoreColor(vixScore), text_color=f_textColorForScore(vixScore), text_size=tableTextSize)
+    table.cell(dash, 0, 13, "Signal", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 13, "Regime", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 13, "Value", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 13, "Score", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 14, "Term Structure", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 14, f_termRegime(termRatio), bgcolor=f_scoreColor(termScore), text_color=f_textColorForScore(termScore), text_size=tableTextSize)
-    table.cell(dash, 2, 14, "VIX/VIX3M\n" + f_valueText(termRatio, "#.###"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 14, f_scoreText(termScore), bgcolor=f_scoreColor(termScore), text_color=f_textColorForScore(termScore), text_size=tableTextSize)
+    table.cell(dash, 0, 14, "VIX Level", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 14, f_vixRegime(vix), bgcolor=f_scoreColor(vixScore), text_color=f_textColorForScore(vixScore), text_size=tableTextSize)
+    table.cell(dash, 2, 14, f_valueText(vix, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 14, f_scoreText(vixScore), bgcolor=f_scoreColor(vixScore), text_color=f_textColorForScore(vixScore), text_size=tableTextSize)
 
-    table.cell(dash, 0, 15, "VVIX", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 15, f_vvixRegime(vvix), bgcolor=f_scoreColor(vvixScore), text_color=f_textColorForScore(vvixScore), text_size=tableTextSize)
-    table.cell(dash, 2, 15, f_valueText(vvix, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 15, f_scoreText(vvixScore), bgcolor=f_scoreColor(vvixScore), text_color=f_textColorForScore(vvixScore), text_size=tableTextSize)
+    table.cell(dash, 0, 15, "Term Structure", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 15, f_termRegime(termRatio), bgcolor=f_scoreColor(termScore), text_color=f_textColorForScore(termScore), text_size=tableTextSize)
+    table.cell(dash, 2, 15, "VIX/VIX3M\n" + f_valueText(termRatio, "#.###"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 15, f_scoreText(termScore), bgcolor=f_scoreColor(termScore), text_color=f_textColorForScore(termScore), text_size=tableTextSize)
 
-    table.cell(dash, 0, 16, "SKEW", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 16, f_skewRegime(skew), bgcolor=f_scoreColor(skewScore), text_color=f_textColorForScore(skewScore), text_size=tableTextSize)
-    table.cell(dash, 2, 16, f_valueText(skew, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 16, f_scoreText(skewScore), bgcolor=f_scoreColor(skewScore), text_color=f_textColorForScore(skewScore), text_size=tableTextSize)
+    table.cell(dash, 0, 16, "VVIX", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 16, f_vvixRegime(vvix), bgcolor=f_scoreColor(vvixScore), text_color=f_textColorForScore(vvixScore), text_size=tableTextSize)
+    table.cell(dash, 2, 16, f_valueText(vvix, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 16, f_scoreText(vvixScore), bgcolor=f_scoreColor(vvixScore), text_color=f_textColorForScore(vvixScore), text_size=tableTextSize)
 
-    table.cell(dash, 0, 17, "Weights", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 17, "VIX 35%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 2, 17, "Term 25% / SKEW 25%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 17, "VVIX 15%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 17, "SKEW", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 17, f_skewRegime(skew), bgcolor=f_scoreColor(skewScore), text_color=f_textColorForScore(skewScore), text_size=tableTextSize)
+    table.cell(dash, 2, 17, f_valueText(skew, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 17, f_scoreText(skewScore), bgcolor=f_scoreColor(skewScore), text_color=f_textColorForScore(skewScore), text_size=tableTextSize)
+
+    table.cell(dash, 0, 18, "Weights", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 18, "VIX 35%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 18, "Term 25% / SKEW 25%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 18, "VVIX 15%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
 
 if not showTable and barstate.islast
     table.clear(dash, 0, 0, 3, 19)
