@@ -41,7 +41,7 @@ tablePos = switch tablePositionInput
 //──────────────────────────────────────────────────────────────────────────────
 // Market Action Pulse inputs
 //──────────────────────────────────────────────────────────────────────────────
-healthSymbol = input.symbol("NASDAQ:QQQE", "Market-health symbol", tooltip = "QQQE recommended for growth stocks", group="Market Action Pulse")
+healthSymbol = input.symbol("NASDAQ:QQQE", "Market-health symbol", tooltip = "QQQE is recommended for technology.\nRSP is recommended for growth non-tech.", group="Market Action Pulse")
 
 tmhUseConfirmedBars = input.bool(
      false,
@@ -107,7 +107,7 @@ skewSymbol  = input.symbol("CBOE:SKEW",  "SKEW symbol", group="VIX Mood Ring")
 dataTimeframe = input.timeframe(
      "D",
      "Volatility data timeframe",
-     tooltip = "Daily is recommended. The VIX Mood Ring is designed as an end-of-day market-health read.",
+     tooltip = "15min. is suggested for intraday movements.\nDaily is recommended as VIX Mood Ring is for end-of-day market-health read.",
      group="VIX Mood Ring"
 )
 
@@ -761,103 +761,97 @@ plot(skew,           title="SKEW", display=display.data_window)
 var table dash = table.new(tablePos, 4, 20, border_width=1)
 
 if showTable and barstate.islast
-    // Combined header
-    table.cell(dash, 0, 0, "Combined Dashboard", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 0, "Trend: " + tmhDashboardState, bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 2, 0, "VIX Mood: " + moodLabel, bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 3, 0, "Composite " + (na(dashboardScore) ? "N/A" : str.tostring(dashboardScore) + "/100"), bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
-
     // Trend section
-    table.cell(dash, 0, 1, "Market Pulse", bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 1, 1, tmhDashboardState, bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 2, 1, healthSymbol + " | " + mccExchange + " | " + mccBreadthFeed, bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 3, 1, "Score " + str.tostring(tmhDashboardScore), bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 0, 0, "Market Pulse", bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 1, 0, tmhDashboardState, bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 2, 0, healthSymbol + " | " + mccExchange + " | " + mccBreadthFeed, bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 3, 0, "Score " + str.tostring(tmhDashboardScore), bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
 
-    table.cell(dash, 0, 2, "Check", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 2, "Status", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 2, 2, "Value", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 2, "Score", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 1, "Check", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 1, "Status", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 1, "Value", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 1, "Score", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 3, siLabel + " uptrend", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 3, mccStatus, bgcolor=mccColor, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 2, 3, siLabel + " " + str.tostring(mccSummation, "#.##") + "\nEMA " + str.tostring(mccMsiEma, "#.##") + "\n" + moLabel + " " + str.tostring(mccOsc, "#.##") + "\nA/D " + str.tostring(advBreadth, "#.##") + "/" + str.tostring(decBreadth, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 2, siLabel + " uptrend", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 2, mccStatus, bgcolor=mccColor, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 2, siLabel + " " + str.tostring(mccSummation, "#.##") + "\nEMA " + str.tostring(mccMsiEma, "#.##") + "\n" + moLabel + " " + str.tostring(mccOsc, "#.##") + "\nA/D " + str.tostring(advBreadth, "#.##") + "/" + str.tostring(decBreadth, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 2, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+
+    table.cell(dash, 0, 3, healthSymbol + " > ↑ 5D EMA", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 3, f_yesNo(qqqeAboveRising5), bgcolor=f_yesNoColor(qqqeAboveRising5), text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 3, "Close " + str.tostring(dClose, "#.##") + "\n5D " + str.tostring(dSma5, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 3, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 4, healthSymbol + " > ↑ 5D EMA", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 4, f_yesNo(qqqeAboveRising5), bgcolor=f_yesNoColor(qqqeAboveRising5), text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 2, 4, "Close " + str.tostring(dClose, "#.##") + "\n5D " + str.tostring(dSma5, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 4, "Daily buy signal", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 4, f_yesNo(dailyBuySignal), bgcolor=f_yesNoColor(dailyBuySignal), text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 4, "10D " + str.tostring(dSma10, "#.##") + "\n20D " + str.tostring(dSma20, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 4, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 5, "Daily buy signal", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 5, f_yesNo(dailyBuySignal), bgcolor=f_yesNoColor(dailyBuySignal), text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 2, 5, "10D " + str.tostring(dSma10, "#.##") + "\n20D " + str.tostring(dSma20, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 5, "Weekly buy signal", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 5, f_yesNo(weeklyBuySignal), bgcolor=f_yesNoColor(weeklyBuySignal), text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 5, "10W " + str.tostring(wSma10, "#.##") + "\n20W " + str.tostring(wSma20, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 5, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 6, "Weekly buy signal", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 6, f_yesNo(weeklyBuySignal), bgcolor=f_yesNoColor(weeklyBuySignal), text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 2, 6, "10W " + str.tostring(wSma10, "#.##") + "\n20W " + str.tostring(wSma20, "#.##"), bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 6, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 6, "2ndry: " + moLabel + " not overbought", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 6, f_yesNo(mccOscOk), bgcolor=f_yesNoColor(mccOscOk), text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 6, "Threshold " + str.tostring(oscOverboughtLevel, "#.##"), bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 6, "", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 7, "2ndry: " + moLabel + " not overbought", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 7, f_yesNo(mccOscOk), bgcolor=f_yesNoColor(mccOscOk), text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 2, 7, "Threshold " + str.tostring(oscOverboughtLevel, "#.##"), bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 7, moLabel + " z-Score", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 7, mccBreadthCondition, bgcolor=mccBreadthConditionColor, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 7, mccZScoreText, bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 7, "", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 8, moLabel + " z-Score", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 8, mccBreadthCondition, bgcolor=mccBreadthConditionColor, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 2, 8, mccZScoreText, bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 8, "", bgcolor=tmhGrayBg, text_color=color.white, text_size=tableTextSize)
-
-    table.cell(dash, 0, 9, "Exposure rule", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 9, tmhDashboardState, bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 2, 9, exposureRule, bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 9, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 8, "Exposure rule", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 8, tmhDashboardState, bgcolor=tmhDashboardColor, text_color=tmhTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 2, 8, exposureRule, bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 8, "", bgcolor=tmhDarkBg, text_color=color.white, text_size=tableTextSize)
 
     // Separator
-    table.cell(dash, 0, 10, "VIX Mood Ring", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 1, 10, moodLabel, bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 2, 10, "Composite", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 3, 10, na(dashboardScore) ? "N/A" : str.tostring(dashboardScore) + "/100", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 0, 9, "VIX Mood Ring", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 1, 9, moodLabel, bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 2, 9, "Composite", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 3, 9, na(dashboardScore) ? "N/A" : str.tostring(dashboardScore) + "/100", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
 
-    table.cell(dash, 0, 11, "Divergence", bgcolor=divergenceColor, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 11, divergenceLabel, bgcolor=divergenceColor, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 2, 11, divergenceText, bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 10, "Divergence", bgcolor=divergenceColor, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 10, divergenceLabel, bgcolor=divergenceColor, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 10, divergenceText, bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 10, "", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+
+    table.cell(dash, 0, 11, "Playbook", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 1, 11, moodLabel, bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
+    table.cell(dash, 2, 11, playbook, bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 11, "", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 12, "Playbook", bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 1, 12, moodLabel, bgcolor=vmrDashboardColor, text_color=vmrTxtOnState, text_size=tableTextSize)
-    table.cell(dash, 2, 12, playbook, bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 12, "", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 12, "Signal", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 12, "Regime", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 12, "Value", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 12, "Score", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 13, "Signal", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 13, "Regime", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 2, 13, "Value", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 13, "Score", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 13, "VIX Level", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 13, f_vixRegime(vix), bgcolor=f_scoreColor(vixScore), text_color=f_textColorForScore(vixScore), text_size=tableTextSize)
+    table.cell(dash, 2, 13, f_valueText(vix, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 13, f_scoreText(vixScore), bgcolor=f_scoreColor(vixScore), text_color=f_textColorForScore(vixScore), text_size=tableTextSize)
 
-    table.cell(dash, 0, 14, "VIX Level", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 14, f_vixRegime(vix), bgcolor=f_scoreColor(vixScore), text_color=f_textColorForScore(vixScore), text_size=tableTextSize)
-    table.cell(dash, 2, 14, f_valueText(vix, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 14, f_scoreText(vixScore), bgcolor=f_scoreColor(vixScore), text_color=f_textColorForScore(vixScore), text_size=tableTextSize)
+    table.cell(dash, 0, 14, "Term Structure", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 14, f_termRegime(termRatio), bgcolor=f_scoreColor(termScore), text_color=f_textColorForScore(termScore), text_size=tableTextSize)
+    table.cell(dash, 2, 14, "VIX/VIX3M\n" + f_valueText(termRatio, "#.###"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 14, f_scoreText(termScore), bgcolor=f_scoreColor(termScore), text_color=f_textColorForScore(termScore), text_size=tableTextSize)
 
-    table.cell(dash, 0, 15, "Term Structure", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 15, f_termRegime(termRatio), bgcolor=f_scoreColor(termScore), text_color=f_textColorForScore(termScore), text_size=tableTextSize)
-    table.cell(dash, 2, 15, "VIX/VIX3M\n" + f_valueText(termRatio, "#.###"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 15, f_scoreText(termScore), bgcolor=f_scoreColor(termScore), text_color=f_textColorForScore(termScore), text_size=tableTextSize)
+    table.cell(dash, 0, 15, "VVIX", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 15, f_vvixRegime(vvix), bgcolor=f_scoreColor(vvixScore), text_color=f_textColorForScore(vvixScore), text_size=tableTextSize)
+    table.cell(dash, 2, 15, f_valueText(vvix, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 15, f_scoreText(vvixScore), bgcolor=f_scoreColor(vvixScore), text_color=f_textColorForScore(vvixScore), text_size=tableTextSize)
 
-    table.cell(dash, 0, 16, "VVIX", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 16, f_vvixRegime(vvix), bgcolor=f_scoreColor(vvixScore), text_color=f_textColorForScore(vvixScore), text_size=tableTextSize)
-    table.cell(dash, 2, 16, f_valueText(vvix, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 16, f_scoreText(vvixScore), bgcolor=f_scoreColor(vvixScore), text_color=f_textColorForScore(vvixScore), text_size=tableTextSize)
+    table.cell(dash, 0, 16, "SKEW", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 16, f_skewRegime(skew), bgcolor=f_scoreColor(skewScore), text_color=f_textColorForScore(skewScore), text_size=tableTextSize)
+    table.cell(dash, 2, 16, f_valueText(skew, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 16, f_scoreText(skewScore), bgcolor=f_scoreColor(skewScore), text_color=f_textColorForScore(skewScore), text_size=tableTextSize)
 
-    table.cell(dash, 0, 17, "SKEW", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 17, f_skewRegime(skew), bgcolor=f_scoreColor(skewScore), text_color=f_textColorForScore(skewScore), text_size=tableTextSize)
-    table.cell(dash, 2, 17, f_valueText(skew, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 17, f_scoreText(skewScore), bgcolor=f_scoreColor(skewScore), text_color=f_textColorForScore(skewScore), text_size=tableTextSize)
-
-    table.cell(dash, 0, 18, "Weights", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 1, 18, "VIX 35%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 2, 18, "Term 25% / SKEW 25%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
-    table.cell(dash, 3, 18, "VVIX 15%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 17, "Weights", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 1, 17, "VIX 35%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 17, "Term 25% / SKEW 25%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 3, 17, "VVIX 15%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
 
 if not showTable and barstate.islast
-    table.clear(dash, 0, 0, 3, 19)
+    table.clear(dash, 0, 0, 3, 18)
