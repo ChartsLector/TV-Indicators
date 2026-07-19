@@ -4,82 +4,570 @@
 // To add new curve to the graph on the excel sheet, you need to create RS ratio and RS momentum columns for that ticker.
 //Then, right click on the graph and choose "Select Data". Under "Legend Entries (Series)" select "Add".
 // "Series name" should be the ticker. "Series X values" should be the RS ratio column. "Series Y values" should be the RS momentum column.
+// New version considers blended 40% weighted RS ratio and 60% weighted RS momentum. 
 // Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 
-indicator("Relative Robustness Rotation", shorttitle="RRR", precision=2)
+indicator("Relative Robustness Rotation — Blended", shorttitle = "RRR Blended", precision = 2)
 
-// Inputs, for shorter swing trades you can use 10, 21, 5, 10 rather than 15, 21, 8, 15.
-refSymbol = input.symbol("SPY", "Reference Symbol")
-rsLen = input.int(15, "RS smoothing length", minval=2)
-ratioNormLen = input.int(21, "RS-Ratio normalization length", minval=5)
-momLen = input.int(8, "RS-Momentum fast length", minval=2)
-momNormLen = input.int(15, "RS-Momentum normalization length", minval=3)
-showRawRS = input.bool(false, "Show raw relative strength")
-showTable = input.bool(true, "Show state table")
+// ============================================================================
+// INPUTS
+// ============================================================================
 
-OptionsTableSize = input.string('Small', title='Table Size   ', options=['Tiny', 'Small', 'Normal', 'Large'], group='Table Settings', inline='5')
+string GROUP_GENERAL = "General Settings"
+string GROUP_RATIO   = "Blended RS-Ratio"
+string GROUP_MOM     = "Blended RS-Momentum"
+string GROUP_ACCEL   = "Momentum Acceleration Adjustment"
+string GROUP_TABLE   = "Table Settings"
 
-tableSize = switch OptionsTableSize
-    'Normal' => size.normal
-    'Tiny'   => size.tiny
-    'Small'  => size.small
-    'Large'  => size.large
+refSymbol = input.symbol(
+    "SPY",
+    "Reference Symbol",
+    group = GROUP_GENERAL
+)
 
-// Benchmark close
-refClose = request.security(refSymbol, timeframe.period, close)
+calcTimeframe = input.timeframe(
+    "D",
+    "Calculation Timeframe",
+    tooltip = "Use D to match the daily-session calculations in the notebook.",
+    group = GROUP_GENERAL
+)
 
-// Relative strength line
-rsLine = 100 * close / refClose
+useCompletedBarsOnly = input.bool(
+    false,
+    "Use Completed Calculation Bars Only",
+    tooltip = "When enabled, the indicator uses the previous completed calculation-timeframe bar rather than the currently forming bar.",
+    group = GROUP_GENERAL
+)
 
-// Approximate RS-Ratio
-rsSmooth = ta.ema(rsLine, rsLen)
-rsBase = ta.ema(rsSmooth, ratioNormLen)
-rsRatio = rsBase != 0 ? 100 * rsSmooth / rsBase : na
+showRawRS = input.bool(
+    false,
+    "Show Raw Relative Strength",
+    group = GROUP_GENERAL
+)
 
-// Approximate RS-Momentum
-momFast = ta.ema(rsRatio, momLen)
-momBase = ta.ema(momFast, momNormLen)
-rsMomentum = momBase != 0 ? 100 * momFast / momBase : na
+showTable = input.bool(
+    true,
+    "Show State Table",
+    group = GROUP_GENERAL
+)
 
-// Quadrant state
+// ============================================================================
+// RS-RATIO PARAMETERS
+// ============================================================================
+
+// Fast R(15, 21)
+ratioFastRsLen = input.int(
+    15,
+    "Fast RS Smoothing Length",
+    minval = 2,
+    group = GROUP_RATIO
+)
+
+ratioFastNormLen = input.int(
+    21,
+    "Fast Ratio Normalization Length",
+    minval = 5,
+    group = GROUP_RATIO
+)
+
+// Slow R(26, 34)
+ratioSlowRsLen = input.int(
+    26,
+    "Slow RS Smoothing Length",
+    minval = 2,
+    group = GROUP_RATIO
+)
+
+ratioSlowNormLen = input.int(
+    34,
+    "Slow Ratio Normalization Length",
+    minval = 5,
+    group = GROUP_RATIO
+)
+
+fastWeight = input.float(
+    0.60,
+    "Fast Component Weight",
+    minval = 0.0,
+    maxval = 1.0,
+    step = 0.05,
+    tooltip = "The slow-component weight is automatically calculated as 1 minus this value.",
+    group = GROUP_RATIO
+)
+
+slowWeight = 1.0 - fastWeight
+
+// ============================================================================
+// RS-MOMENTUM PARAMETERS
+// ============================================================================
+
+// Fast M(8, 15)
+momFastLen = input.int(
+    8,
+    "Fast Momentum Length",
+    minval = 2,
+    group = GROUP_MOM
+)
+
+momFastNormLen = input.int(
+    15,
+    "Fast Momentum Normalization Length",
+    minval = 3,
+    group = GROUP_MOM
+)
+
+// Slow M(15, 26)
+momSlowLen = input.int(
+    15,
+    "Slow Momentum Length",
+    minval = 2,
+    group = GROUP_MOM
+)
+
+momSlowNormLen = input.int(
+    26,
+    "Slow Momentum Normalization Length",
+    minval = 3,
+    group = GROUP_MOM
+)
+
+// ============================================================================
+// ACCELERATION-ADJUSTMENT PARAMETERS
+// ============================================================================
+
+enableAccelerationAdjustment = input.bool(
+    true,
+    "Enable Acceleration Adjustment",
+    group = GROUP_ACCEL
+)
+
+accelerationMax = input.float(
+    0.10,
+    "Maximum Absolute Adjustment",
+    minval = 0.0,
+    step = 0.01,
+    tooltip = "The final correction is bounded between minus and plus this value.",
+    group = GROUP_ACCEL
+)
+
+accelerationCompareBars = input.int(
+    5,
+    "Longer Change Period",
+    minval = 2,
+    tooltip = "On the daily calculation timeframe, this represents five trading sessions.",
+    group = GROUP_ACCEL
+)
+
+accelerationVolLength = input.int(
+    20,
+    "Change Volatility Length",
+    minval = 5,
+    group = GROUP_ACCEL
+)
+
+accelerationEpsilon = 1e-12
+
+// ============================================================================
+// TABLE SETTINGS
+// ============================================================================
+
+optionsTableSize = input.string(
+    "Small",
+    "Table Size",
+    options = ["Tiny", "Small", "Normal", "Large"],
+    group = GROUP_TABLE
+)
+
+tableSize = switch optionsTableSize
+    "Tiny"   => size.tiny
+    "Small"  => size.small
+    "Normal" => size.normal
+    "Large"  => size.large
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+calculateRatioComponent(
+    float relativeStrength,
+    int smoothingLength,
+    int normalizationLength
+) =>
+    float smoothedStrength = ta.ema(relativeStrength, smoothingLength)
+    float strengthBase = ta.ema(smoothedStrength, normalizationLength)
+
+    strengthBase != 0.0 ? 100.0 * smoothedStrength / strengthBase : na
+
+
+calculateMomentumComponent(
+    float blendedRatio,
+    int momentumLength,
+    int normalizationLength
+) =>
+    float smoothedMomentum = ta.ema(blendedRatio, momentumLength)
+    float momentumBase = ta.ema(smoothedMomentum, normalizationLength)
+
+    momentumBase != 0.0 ? 100.0 * smoothedMomentum / momentumBase : na
+
+
+// Numerically stable tanh approximation.
+// The input is clamped to avoid exponential overflow.
+boundedTanh(float value) =>
+    float clippedValue = math.max(-20.0, math.min(20.0, value))
+
+    2.0 / (1.0 + math.exp(-2.0 * clippedValue)) - 1.0
+
+// ============================================================================
+// CALCULATION-TIMEFRAME CLOSES
+// ============================================================================
+
+chartSymbolClose = request.security(
+    syminfo.tickerid,
+    calcTimeframe,
+    useCompletedBarsOnly ? close[1] : close
+)
+
+referenceClose = request.security(
+    refSymbol,
+    calcTimeframe,
+    useCompletedBarsOnly ? close[1] : close
+)
+
+// ============================================================================
+// RAW RELATIVE-STRENGTH LINE
+// ============================================================================
+
+rsLine = referenceClose != 0.0 ? 100.0 * chartSymbolClose / referenceClose : na
+
+// ============================================================================
+// BLENDED RS-RATIO
+// ============================================================================
+
+// Fast component:
+// R_fast = R(15, 21)
+rsRatioFast = calculateRatioComponent(
+    rsLine,
+    ratioFastRsLen,
+    ratioFastNormLen
+)
+
+// Slow component:
+// R_slow = R(26, 34)
+rsRatioSlow = calculateRatioComponent(
+    rsLine,
+    ratioSlowRsLen,
+    ratioSlowNormLen
+)
+
+// R_blend = 0.60 × R_fast + 0.40 × R_slow
+rsRatio = (
+    fastWeight * rsRatioFast
+    + slowWeight * rsRatioSlow
+)
+
+// ============================================================================
+// BLENDED RS-MOMENTUM
+// ============================================================================
+
+// Both momentum components are calculated from the blended RS-Ratio.
+
+// Fast component:
+// M_fast = M(8, 15)
+rsMomentumFast = calculateMomentumComponent(
+    rsRatio,
+    momFastLen,
+    momFastNormLen
+)
+
+// Slow component:
+// M_slow = M(15, 26)
+rsMomentumSlow = calculateMomentumComponent(
+    rsRatio,
+    momSlowLen,
+    momSlowNormLen
+)
+
+// M_blend = 0.60 × M_fast + 0.40 × M_slow
+rsMomentumBlend = (
+    fastWeight * rsMomentumFast
+    + slowWeight * rsMomentumSlow
+)
+
+// ============================================================================
+// BOUNDED MOMENTUM-ACCELERATION ADJUSTMENT
+// ============================================================================
+
+// One-period change in blended RS-Ratio.
+ratioChange1 = ta.change(rsRatio, 1)
+
+// Average per-period change over the longer comparison window.
+ratioChangeLongAverage = (
+    ta.change(rsRatio, accelerationCompareBars)
+    / accelerationCompareBars
+)
+
+// Rolling population standard deviation of one-period ratio changes.
+ratioChangeVolatility = ta.stdev(
+    ratioChange1,
+    accelerationVolLength
+)
+
+// Acceleration:
+// most recent change minus average longer-period change.
+accelerationDifference = (
+    ratioChange1
+    - ratioChangeLongAverage
+)
+
+// Volatility-normalized acceleration.
+accelerationZ = (not na(ratioChangeVolatility) and ratioChangeVolatility > accelerationEpsilon) ? accelerationDifference / (ratioChangeVolatility + accelerationEpsilon) : na
+
+// Correction is bounded between -accelerationMax and +accelerationMax.
+accelerationAdjustmentRaw = (
+    accelerationMax
+    * boundedTanh(accelerationZ)
+)
+
+// Match the notebook's warm-up treatment by using zero adjustment
+// before sufficient volatility history exists.
+accelerationAdjustment = (
+    enableAccelerationAdjustment
+        ? nz(accelerationAdjustmentRaw, 0.0)
+        : 0.0
+)
+
+// Adjustment is applied only to final RS-Momentum.
+rsMomentum = (
+    rsMomentumBlend
+    + accelerationAdjustment
+)
+
+// ============================================================================
+// QUADRANT STATE
+// ============================================================================
+
 leadingColor = color.new(color.green, 0)
 improvingColor = color.new(color.blue, 0)
 laggingColor = color.new(color.red, 0)
 weakeningColor = color.new(color.orange, 0)
 
-stateColor = na(rsRatio) or na(rsMomentum) ? color.gray : rsRatio >= 100 and rsMomentum >= 100 ? leadingColor : rsRatio < 100 and rsMomentum >= 100 ? improvingColor : rsRatio < 100 and rsMomentum < 100 ? laggingColor : weakeningColor
-stateText = na(rsRatio) or na(rsMomentum) ? "N/A" : rsRatio >= 100 and rsMomentum >= 100 ? "Leading" : rsRatio < 100 and rsMomentum >= 100 ? "Improving" : rsRatio < 100 and rsMomentum < 100 ? "Lagging" : "Weakening"
+valuesAvailable = (
+    not na(rsRatio)
+    and not na(rsMomentum)
+)
 
-// Plots
-plot(showRawRS ? rsLine : na, title="Raw Relative Strength", color=color.gray, linewidth=1, display=display.all - display.price_scale - display.status_line)
-plot(rsRatio, title="Approx RS-Ratio", color=color.aqua, linewidth=2)
-plot(rsMomentum, title="Approx RS-Momentum", color=stateColor, linewidth=2)
+stateColor = not valuesAvailable ? color.gray : rsRatio >= 100.0 and rsMomentum >= 100.0 ? leadingColor : rsRatio < 100.0 and rsMomentum >= 100.0 ? improvingColor : rsRatio < 100.0 and rsMomentum < 100.0 ? laggingColor : weakeningColor
 
-hline(100, "100 Baseline", color=color.gray, linestyle=hline.style_dotted)
-bgcolor(color.new(stateColor, 92))
+stateText = not valuesAvailable ? "N/A" : rsRatio >= 100.0 and rsMomentum >= 100.0 ? "Leading" : rsRatio < 100.0 and rsMomentum >= 100.0 ? "Improving" : rsRatio < 100.0 and rsMomentum < 100.0 ? "Lagging" : "Weakening"
 
-// Alerts
-alertcondition(rsRatio > 100 and rsMomentum > 100, "Leading", "Approx RRG state: Leading")
-alertcondition(rsRatio < 100 and rsMomentum > 100, "Improving", "Approx RRG state: Improving")
-alertcondition(rsRatio < 100 and rsMomentum < 100, "Lagging", "Approx RRG state: Lagging")
-alertcondition(rsRatio > 100 and rsMomentum < 100, "Weakening", "Approx RRG state: Weakening")
-alertcondition(ta.crossover(rsRatio, 100), "RS-Ratio crossed above 100", "Approx RS-Ratio crossed above 100")
-alertcondition(ta.crossunder(rsRatio, 100), "RS-Ratio crossed below 100", "Approx RS-Ratio crossed below 100")
-alertcondition(ta.crossover(rsMomentum, 100), "RS-Momentum crossed above 100", "Approx RS-Momentum crossed above 100")
-alertcondition(ta.crossunder(rsMomentum, 100), "RS-Momentum crossed below 100", "Approx RS-Momentum crossed below 100")
+// ============================================================================
+// PLOTS
+// ============================================================================
 
-// Table
-var table t = table.new(position.top_right, 2, 4, border_width=1)
+plot(
+    showRawRS ? rsLine : na,
+    title = "Raw Relative Strength",
+    color = color.gray,
+    linewidth = 1,
+    display = display.all - display.price_scale - display.status_line
+)
+
+plot(
+    rsRatio,
+    title = "Blended RS-Ratio",
+    color = color.white,
+    linewidth = 2
+)
+
+plot(
+    rsMomentum,
+    title = "Adjusted Blended RS-Momentum",
+    color = stateColor,
+    linewidth = 2
+)
+
+hline(
+    100.0,
+    "100 Baseline",
+    color = color.gray,
+    linestyle = hline.style_dotted
+)
+
+bgcolor(
+    color.new(stateColor, 92)
+)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(
+    rsRatio >= 100.0 and rsMomentum >= 100.0,
+    "Leading",
+    "Blended RRG state: Leading"
+)
+
+alertcondition(
+    rsRatio < 100.0 and rsMomentum >= 100.0,
+    "Improving",
+    "Blended RRG state: Improving"
+)
+
+alertcondition(
+    rsRatio < 100.0 and rsMomentum < 100.0,
+    "Lagging",
+    "Blended RRG state: Lagging"
+)
+
+alertcondition(
+    rsRatio >= 100.0 and rsMomentum < 100.0,
+    "Weakening",
+    "Blended RRG state: Weakening"
+)
+
+alertcondition(
+    ta.crossover(rsRatio, 100.0),
+    "RS-Ratio Crossed Above 100",
+    "Blended RS-Ratio crossed above 100"
+)
+
+alertcondition(
+    ta.crossunder(rsRatio, 100.0),
+    "RS-Ratio Crossed Below 100",
+    "Blended RS-Ratio crossed below 100"
+)
+
+alertcondition(
+    ta.crossover(rsMomentum, 100.0),
+    "RS-Momentum Crossed Above 100",
+    "Adjusted blended RS-Momentum crossed above 100"
+)
+
+alertcondition(
+    ta.crossunder(rsMomentum, 100.0),
+    "RS-Momentum Crossed Below 100",
+    "Adjusted blended RS-Momentum crossed below 100"
+)
+
+// ============================================================================
+// TABLE
+// ============================================================================
+
+var table stateTable = table.new(
+    position.top_right,
+    2,
+    5,
+    border_width = 1
+)
 
 if barstate.islast
     if showTable
-        table.cell(t, 0, 0, "RS-Mom. State", text_color=color.white, bgcolor=color.black, text_size=tableSize)
-        table.cell(t, 1, 0, stateText, text_color=color.white, bgcolor=stateColor, text_size=tableSize)
-        table.cell(t, 0, 1, "RS-Momentum", text_color=color.white, bgcolor=color.black, text_size=tableSize)
-        table.cell(t, 1, 1, str.tostring(rsMomentum, "#.00"), text_color=color.white, bgcolor=color.black, text_size=tableSize)
-        table.cell(t, 0, 2, "RS-Ratio", text_color=color.black, bgcolor=color.aqua, text_size=tableSize)
-        table.cell(t, 1, 2, str.tostring(rsRatio, "#.00"), text_color=color.white, bgcolor=color.black, text_size=tableSize)
-        table.cell(t, 0, 3, "Benchmark", text_color=color.white, bgcolor=color.black, text_size=tableSize)
-        table.cell(t, 1, 3, refSymbol, text_color=color.white, bgcolor=color.black, text_size=tableSize)
+        table.cell(
+            stateTable,
+            0,
+            0,
+            "RRR State",
+            text_color = color.white,
+            bgcolor = color.black,
+            text_size = tableSize
+        )
+
+        table.cell(
+            stateTable,
+            1,
+            0,
+            stateText,
+            text_color = color.white,
+            bgcolor = stateColor,
+            text_size = tableSize
+        )
+
+        table.cell(
+            stateTable,
+            0,
+            1,
+            "RS-Momentum",
+            text_color = color.white,
+            bgcolor = color.black,
+            text_size = tableSize
+        )
+
+        table.cell(
+            stateTable,
+            1,
+            1,
+            str.tostring(rsMomentum, "#.00"),
+            text_color = color.white,
+            bgcolor = stateColor,
+            text_size = tableSize
+        )
+
+        table.cell(
+            stateTable,
+            0,
+            2,
+            "Mom. Adjustment",
+            text_color = color.white,
+            bgcolor = color.black,
+            text_size = tableSize
+        )
+
+        table.cell(
+            stateTable,
+            1,
+            2,
+            str.tostring(accelerationAdjustment, "#.000"),
+            text_color = accelerationAdjustment >= 0.0
+                ? color.lime
+                : color.red,
+            bgcolor = color.black,
+            text_size = tableSize
+        )
+
+        table.cell(
+            stateTable,
+            0,
+            3,
+            "RS-Ratio",
+            text_color = color.white,
+            bgcolor = color.black,
+            text_size = tableSize
+        )
+
+        table.cell(
+            stateTable,
+            1,
+            3,
+            str.tostring(rsRatio, "#.00"),
+            text_color = color.black,
+            bgcolor = color.white,
+            text_size = tableSize
+        )
+
+        table.cell(
+            stateTable,
+            0,
+            4,
+            "Benchmark",
+            text_color = color.white,
+            bgcolor = color.black,
+            text_size = tableSize
+        )
+
+        table.cell(
+            stateTable,
+            1,
+            4,
+            refSymbol,
+            text_color = color.white,
+            bgcolor = color.black,
+            text_size = tableSize
+        )
     else
-        table.clear(t, 0, 0, 1, 3)
+        table.clear(
+            stateTable,
+            0,
+            0,
+            1,
+            4
+        )
