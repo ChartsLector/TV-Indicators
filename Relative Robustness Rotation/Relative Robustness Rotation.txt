@@ -4,7 +4,7 @@
 // To add new curve to the graph on the excel sheet, you need to create RS ratio and RS momentum columns for that ticker.
 //Then, right click on the graph and choose "Select Data". Under "Legend Entries (Series)" select "Add".
 // "Series name" should be the ticker. "Series X values" should be the RS ratio column. "Series Y values" should be the RS momentum column.
-// New version considers blended 40% weighted RS ratio and 60% weighted RS momentum, inspired by:
+// New version considers weighted 60%/40% fast/slow lengths for RS-momentum and  RS-ratio, inspired by:
 // https://x.com/jfsrev/status/2064559372655866303
 // Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 
