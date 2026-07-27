@@ -46,7 +46,7 @@ healthSymbol = input.symbol("NASDAQ:QQQE", "Market-health symbol", tooltip = "QQ
 tmhUseConfirmedBars = input.bool(
      false,
      "Use completed daily/weekly bars only",
-     tooltip = "ON = avoids live-session repainting by using the previous completed daily/weekly bar.",
+     tooltip = "OFF = use the current source bar so cross-symbol values match the latest TradingView quote; values can repaint while the source bar is open.\nON = use the previous fully completed daily/weekly bar.",
      group="Market Action Pulse"
 )
 
@@ -78,7 +78,7 @@ mccSlowLen = input.int(39, "McClellan slow EMA", minval=2, group="Market Action 
 msiEmaLen  = input.int(10, "MSI EMA Length", minval=1, group="Market Action Pulse")
 
 oscOverboughtLevel = input.float(
-     100.0,
+     50.0,
      "NAMO/NYMO overbought threshold",
      tooltip = "Secondary diagnostic only. It does not affect dashboard color.",
      group="Market Action Pulse"
@@ -99,7 +99,12 @@ tmhConfirmOffset = tmhUseConfirmedBars ? 1 : 0
 //──────────────────────────────────────────────────────────────────────────────
 // VIX Mood Ring inputs
 //──────────────────────────────────────────────────────────────────────────────
-vixSymbol   = input.symbol("CBOE:VIX",   "VIX symbol", group="VIX Mood Ring")
+vixSymbol   = input.symbol(
+     "TVC:VIX",
+     "VIX symbol",
+     tooltip = "Choose between TVC:VIX and CBOE:VIX.",
+     group="VIX Mood Ring"
+)
 vix3mSymbol = input.symbol("CBOE:VIX3M", "VIX3M symbol", group="VIX Mood Ring")
 vvixSymbol  = input.symbol("CBOE:VVIX",  "VVIX symbol", group="VIX Mood Ring")
 skewSymbol  = input.symbol("CBOE:SKEW",  "SKEW symbol", group="VIX Mood Ring")
@@ -107,14 +112,14 @@ skewSymbol  = input.symbol("CBOE:SKEW",  "SKEW symbol", group="VIX Mood Ring")
 dataTimeframe = input.timeframe(
      "D",
      "Volatility data timeframe",
-     tooltip = "15min. is suggested for intraday movements.\nDaily is recommended as VIX Mood Ring is for end-of-day market-health read.",
+     tooltip = "Daily is recommended as VIX Mood Ring is for end-of-day market-health read.",
      group="VIX Mood Ring"
 )
 
 vmrUseConfirmedBars = input.bool(
      false,
      "Use completed volatility bars only",
-     tooltip = "ON = uses the previous completed volatility bar. This avoids live-session repainting.",
+     tooltip = "OFF = use the current CBOE source bar so VIX/VIX3M/VVIX/SKEW match their latest TradingView quotes; values can repaint while the source bar is open.\nON = use the previous fully completed volatility bar.",
      group="VIX Mood Ring"
 )
 
@@ -168,13 +173,18 @@ f_dailyChecks(_offset) =>
 
     [c, ema5, ema10, ema20, aboveRising5, dailyBuy, breakattempt, strongerbreakattempt]
 
+// Cross-symbol alignment:
+// - offset 0 + lookahead_on = current source bar, matching the latest source quote
+//   even when its session closes later than the chart symbol.
+// - offset 1 + lookahead_on = previous fully confirmed source bar.
+// This is intentional; live mode can repaint until the source bar closes.
 [dClose, dSma5, dSma10, dSma20, qqqeAboveRising5, dailyBuySignal, dailyBreakAttempt, dailyStrongerBreakAttempt] =
      request.security(
          healthSymbol,
          "D",
          f_dailyChecks(tmhConfirmOffset),
          barmerge.gaps_off,
-         barmerge.lookahead_off
+         barmerge.lookahead_on
      )
 
 //──────────────────────────────────────────────────────────────────────────────
@@ -195,7 +205,7 @@ f_weeklyChecks(_offset) =>
          "W",
          f_weeklyChecks(tmhConfirmOffset),
          barmerge.gaps_off,
-         barmerge.lookahead_off
+         barmerge.lookahead_on
      )
 
 //──────────────────────────────────────────────────────────────────────────────
@@ -207,18 +217,18 @@ siLabel = isNasdaqMcc ? "NASI" : "NYSI"
 moLabel = isNasdaqMcc ? "NAMO" : "NYMO"
 
 // Barchart McClellan breadth symbols kept intact.
-nyAdvBarchart = request.security("ADVN", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
-nyDecBarchart = request.security("DECN", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
+nyAdvBarchart = request.security("ADVN", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_on)
+nyDecBarchart = request.security("DECN", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_on)
 
-naAdvBarchart = request.security("ADVQ", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
-naDecBarchart = request.security("DECQ", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
+naAdvBarchart = request.security("ADVQ", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_on)
+naDecBarchart = request.security("DECQ", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_on)
 
 // Added USI breadth symbols.
-nyAdvUsi = request.security("USI:ADVN.NY", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
-nyDecUsi = request.security("USI:DECL.NY", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
+nyAdvUsi = request.security("USI:ADVN.NY", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_on)
+nyDecUsi = request.security("USI:DECL.NY", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_on)
 
-naAdvUsi = request.security("USI:ADVN.NQ", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
-naDecUsi = request.security("USI:DECL.NQ", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_off)
+naAdvUsi = request.security("USI:ADVN.NQ", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_on)
+naDecUsi = request.security("USI:DECL.NQ", mccTimeframe, close[tmhConfirmOffset], barmerge.gaps_off, barmerge.lookahead_on)
 
 useUsiBreadth = mccBreadthFeed == "USI"
 
@@ -352,20 +362,20 @@ f_exposureRule(_state, _prevState) =>
 
     if _state == "GREEN"
         rule := "Build toward full exposure progressively."
-    else if _state == "BLUE" and (_prevState == "Purple" or _prevState == "Yellow")
-        rule := "Risky→Blue: build up to 60%; add more if de-risked."
-    else if _state == "BLUE" and not (_prevState == "Purple" or _prevState == "Yellow")
+    else if _state == "BLUE" and (_prevState == "PURPLE" or _prevState == "YELLOW")
+        rule := "Risky→Blue: build up to 60%;\n add more if de-risked."
+    else if _state == "BLUE" and not (_prevState == "PURPLE" or _prevState == "YELLOW")
         rule := "Blue: add more if positions gain traction."
     else if _state == "YELLOW" and _prevState == "GREEN"
-        rule := "Green→Yellow: raise stops, trim heat, protect gains."
+        rule := "Green→Yellow: raise stops,\n trim heat, protect gains."
     else if _state == "YELLOW"
-        rule := "From cash→Yellow: build up to 30%; add more if de-risked."
+        rule := "From cash→Yellow: build up to 30%;\n add more if de-risked."
     else if _state == "AMBER"
-        rule := "Test only 1–2 trades; add more if de-risked."
+        rule := "Test only 1–2 trades;\nadd more if de-risked."
     else if _state == "PURPLE"
-        rule := "No new trades; reduce open heat and protect gains."
+        rule := "No new trades;\nreduce open heat and protect gains."
     else
-        rule := "Exit longs / stay cash; tactical shorts allowed with hard stops."
+        rule := "Exit longs / stay cash;\ntactical shorts allowed with hard stops."
 
     rule
 
@@ -385,11 +395,11 @@ mccColor  = mccUptrend ? tmhGreenBg : mccAttempt ? tmhAmberBg : tmhRedBg
 
 mccBreadthCondition =
      na(mccZScore)       ? "N/A"             :
-     mccZScore >= 2.0    ? "++ve Breadth"    :
+     mccZScore >= 2.0    ? "+ve Overbought Breadth"    :
      mccZScore >= 1.0    ? "+ve Breadth"     :
      mccZScore >= -1.0   ? "Neutral Breadth" :
      mccZScore >= -2.0   ? "-ve Breadth"     :
-     "--ve Breadth"
+     "-ve Oversold Breadth"
 
 mccBreadthConditionColor =
      na(mccZScore)       ? tmhGrayBg   :
@@ -410,12 +420,23 @@ tmhTxtOnState = tmhDashboardState == "YELLOW" ? color.black : color.white
 //──────────────────────────────────────────────────────────────────────────────
 // Data
 //──────────────────────────────────────────────────────────────────────────────
+// VIX is collected separately from VIX3M/VVIX/SKEW.
+//
+// IMPORTANT:
+// request.security_lower_tf() was removed because a non-na 1-second/10-second
+// intrabar can still be stale or delayed. The old priority chain therefore
+// selected an older intraday value instead of the current VIX source-bar value.
+//
+// OFF (the unchanged default false choice) reads the developing current VIX bar
+// with lookahead_on, matching the value shown on TradingView's VIX chart for the
+// selected volatility timeframe.
+// ON reads the previous fully completed VIX bar.
 vix = request.security(
      vixSymbol,
      dataTimeframe,
      close[vmrConfirmOffset],
      barmerge.gaps_off,
-     barmerge.lookahead_off
+     barmerge.lookahead_on
 )
 
 vix3m = request.security(
@@ -423,7 +444,7 @@ vix3m = request.security(
      dataTimeframe,
      close[vmrConfirmOffset],
      barmerge.gaps_off,
-     barmerge.lookahead_off
+     barmerge.lookahead_on
 )
 
 vvix = request.security(
@@ -431,7 +452,7 @@ vvix = request.security(
      dataTimeframe,
      close[vmrConfirmOffset],
      barmerge.gaps_off,
-     barmerge.lookahead_off
+     barmerge.lookahead_on
 )
 
 skew = request.security(
@@ -439,7 +460,7 @@ skew = request.security(
      dataTimeframe,
      close[vmrConfirmOffset],
      barmerge.gaps_off,
-     barmerge.lookahead_off
+     barmerge.lookahead_on
 )
 
 termRatio = not na(vix) and not na(vix3m) and vix3m != 0.0 ? vix / vix3m : na
@@ -828,14 +849,14 @@ if showTable and barstate.islast
     table.cell(dash, 2, 12, "Value", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 12, "Score", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
 
-    table.cell(dash, 0, 13, "VIX Level", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 13, "VIX Level\n" + vixSymbol, bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 1, 13, f_vixRegime(vix), bgcolor=f_scoreColor(vixScore), text_color=f_textColorForScore(vixScore), text_size=tableTextSize)
     table.cell(dash, 2, 13, f_valueText(vix, "#.##"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 13, f_scoreText(vixScore), bgcolor=f_scoreColor(vixScore), text_color=f_textColorForScore(vixScore), text_size=tableTextSize)
 
-    table.cell(dash, 0, 14, "Term Structure", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 0, 14, "VIX/VIX3M", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 1, 14, f_termRegime(termRatio), bgcolor=f_scoreColor(termScore), text_color=f_textColorForScore(termScore), text_size=tableTextSize)
-    table.cell(dash, 2, 14, "VIX/VIX3M\n" + f_valueText(termRatio, "#.###"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+    table.cell(dash, 2, 14, f_valueText(termRatio, "#.###"), bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 14, f_scoreText(termScore), bgcolor=f_scoreColor(termScore), text_color=f_textColorForScore(termScore), text_size=tableTextSize)
 
     table.cell(dash, 0, 15, "VVIX", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
