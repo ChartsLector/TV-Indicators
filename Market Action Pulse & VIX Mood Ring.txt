@@ -1,5 +1,5 @@
 // Based on: @BigWaveChartist https://bigwavechartist.substack.com/p/measuring-market-health 
-// and @JohnMuchow https://x.com/JohnMuchow/article/20336662144 72409492
+// and @JohnMuchow https://x.com/JohnMuchow/article/2033666214472409492
 // Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 //@version=6
 indicator("Market Action Pulse & VIX Mood Ring", shorttitle="MAP+VMR", overlay=true)
