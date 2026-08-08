@@ -5,7 +5,7 @@
 //   4) log-sum-exp responsibilities for numerical stability,
 //   5) dynamic support for 2–5 components.
 // Updated from @AlphaNatt's indicator: https://www.tradingview.com/script/Ak2YzGrb-Machine-Learning-Gaussian-Mixture-Model-AlphaNatt/
-// The indicator advantages over the original is it has dynamical variances, learned weights, considers volume in clustering, and measures mean updates systematically.
+// The indicator advantages over the original are the dynamical variances, the learned weights, considered volume in clustering, and measuring mean updates systematically.
 // EM GMR uses true 3-feature: 
 //    i) Momentum: volatility-normalized log price return over the momentum horizon, measuring directional strength.
 //    ii) Volatility: log ratio of short-term to longer-term baseline volatilities, identifying calm vs. turbulent conditions.
