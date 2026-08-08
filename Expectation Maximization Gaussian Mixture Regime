@@ -1,0 +1,718 @@
+// This is a genuine 3-feature, K-component Gaussian mixture model with:
+//   1) batch EM initialization on an initial sample,
+//   2) learned mixture weights, means, and diagonal variances,
+//   3) exponentially weighted online-EM updates after initialization,
+//   4) log-sum-exp responsibilities for numerical stability,
+//   5) dynamic support for 2–5 components.
+// Updated from @AlphaNatt's indicator: https://www.tradingview.com/script/Ak2YzGrb-Machine-Learning-Gaussian-Mixture-Model-AlphaNatt/
+// The indicator advantages over the original is it has dynamical variances, learned weights, considers volume in clustering, and measures mean updates systematically.
+// EM GMR uses true 3-feature: 
+//    i) Momentum: volatility-normalized log price return over the momentum horizon, measuring directional strength.
+//    ii) Volatility: log ratio of short-term to longer-term baseline volatilities, identifying calm vs. turbulent conditions.
+//    iii) Relative Volume: log ratio of current volume to 50D average, measuring unusual trading activity.
+//
+// Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
+//@version=6
+indicator("Expectation Maximization Gaussian Mixture Regime", shorttitle="EM GMR", overlay=false, max_bars_back=1000)
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+string GROUP_MODEL = "Gaussian Mixture Model"
+string GROUP_FEATURES = "Features"
+string GROUP_DISPLAY = "Display"
+string GROUP_DIAGNOSTICS = "Model Diagnostics Table"
+
+int memoryLength = input.int(100, "Effective learning memory", minval=50, maxval=500, group=GROUP_MODEL,
+     tooltip="Controls the exponential memory of online EM and the long-volatility baseline. Larger values adapt more slowly.")
+int nComponents = input.int(3, "Gaussian components", minval=2, maxval=5, group=GROUP_MODEL)
+int initializationBarsInput = input.int(75, "Initialization sample", minval=30, maxval=200, group=GROUP_MODEL,
+     tooltip="Number of valid feature observations used for the initial batch-EM fit.")
+int initializationIterations = input.int(15, "Initialization EM iterations", minval=3, maxval=40, group=GROUP_MODEL)
+float convergenceTolerance = input.float(0.0001, "EM relative tolerance", minval=0.000001, maxval=0.01, step=0.0001, group=GROUP_MODEL)
+float varianceFloor = input.float(0.05, "Variance floor", minval=0.001, maxval=1.0, step=0.001, group=GROUP_MODEL,
+     tooltip="Regularizes diagonal covariance estimates and prevents singular components.")
+float minimumWeight = input.float(0.01, "Minimum component weight", minval=0.001, maxval=0.10, step=0.001, group=GROUP_MODEL,
+     tooltip="Small regularization floor for mixture weights.")
+
+int momentumLength = input.int(14, "Momentum horizon", minval=5, maxval=50, group=GROUP_FEATURES)
+int volatilityLength = input.int(20, "Short volatility horizon", minval=5, maxval=100, group=GROUP_FEATURES)
+int volumeLength = input.int(50, "Relative-volume horizon", minval=5, maxval=100, group=GROUP_FEATURES)
+float featureClip = input.float(6.0, "Feature clipping", minval=2.0, maxval=12.0, step=0.5, group=GROUP_FEATURES,
+     tooltip="Winsorizes extreme standardized feature observations before fitting.")
+
+int smoothing = input.int(3, "Oscillator smoothing", minval=1, maxval=20, group=GROUP_DISPLAY)
+bool showGradient = input.bool(true, "Show gradient", group=GROUP_DISPLAY)
+bool showHistogram = input.bool(true, "Show histogram", group=GROUP_DISPLAY)
+bool showRegime = input.bool(true, "Show regime background", group=GROUP_DISPLAY)
+bool showCertainty = input.bool(true, "Show entropy certainty", group=GROUP_DISPLAY)
+bool barColoring = input.bool(false, "Color price bars", group=GROUP_DISPLAY)
+
+bool showDiagnostics = input.bool(true, "Show diagnostics table", group=GROUP_DIAGNOSTICS)
+string diagnosticsPositionInput = input.string("Top Right", "Table position",
+     options=["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right",
+              "Bottom Left", "Bottom Center", "Bottom Right"], group=GROUP_DIAGNOSTICS)
+string diagnosticsDetailLevel = input.string("Standard", "Detail level",
+     options=["Compact", "Standard", "Full Components"], group=GROUP_DIAGNOSTICS,
+     tooltip="Compact shows the live classification essentials. Standard adds fit and likelihood diagnostics. Full Components also displays each component's weight and learned feature means.")
+string diagnosticsTextSizeInput = input.string("Tiny", "Text size",
+     options=["Tiny", "Small", "Normal", "Large"], group=GROUP_DIAGNOSTICS)
+int diagnosticsBackgroundTransparency = input.int(78, "Background transparency", minval=0, maxval=100, group=GROUP_DIAGNOSTICS)
+bool showDiagnosticsDuringWarmup = input.bool(true, "Show during initialization warm-up", group=GROUP_DIAGNOSTICS)
+
+color bullColor = #00F1FF
+color bearColor = #FF019A
+color neutralColor = color.gray
+
+int initializationBars = math.max(initializationBarsInput, nComponents * 10)
+float EPS = 1e-10
+float LOG_2PI = math.log(2.0 * math.pi)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+f_clip(float value, float limit) =>
+    math.max(-limit, math.min(limit, value))
+
+f_log_component_density(
+    float x1,
+    float x2,
+    float x3,
+    int component,
+    array<float> weights,
+    array<float> means,
+    array<float> variances) =>
+
+    int base = component * 3
+    float weight = math.max(array.get(weights, component), EPS)
+
+    float mean1 = array.get(means, base)
+    float mean2 = array.get(means, base + 1)
+    float mean3 = array.get(means, base + 2)
+
+    float variance1 = math.max(array.get(variances, base), varianceFloor)
+    float variance2 = math.max(array.get(variances, base + 1), varianceFloor)
+    float variance3 = math.max(array.get(variances, base + 2), varianceFloor)
+
+    float d1 = x1 - mean1
+    float d2 = x2 - mean2
+    float d3 = x3 - mean3
+
+    float mahalanobis = d1 * d1 / variance1 + d2 * d2 / variance2 + d3 * d3 / variance3
+    float logDeterminant = math.log(variance1) + math.log(variance2) + math.log(variance3)
+
+    math.log(weight) - 0.5 * (3.0 * LOG_2PI + logDeterminant + mahalanobis)
+
+// Fills posterior responsibilities and returns log p(x).
+f_responsibilities(
+    float x1,
+    float x2,
+    float x3,
+    array<float> weights,
+    array<float> means,
+    array<float> variances,
+    array<float> logProbabilities,
+    array<float> responsibilities) =>
+
+    int componentCount = array.size(weights)
+    float maxLogProbability = -1e30
+
+    for component = 0 to componentCount - 1
+        float logProbability = f_log_component_density(x1, x2, x3, component, weights, means, variances)
+        array.set(logProbabilities, component, logProbability)
+        maxLogProbability := math.max(maxLogProbability, logProbability)
+
+    float exponentialSum = 0.0
+    for component = 0 to componentCount - 1
+        float stabilized = math.exp(array.get(logProbabilities, component) - maxLogProbability)
+        array.set(responsibilities, component, stabilized)
+        exponentialSum += stabilized
+
+    exponentialSum := math.max(exponentialSum, EPS)
+    for component = 0 to componentCount - 1
+        array.set(responsibilities, component, array.get(responsibilities, component) / exponentialSum)
+
+    maxLogProbability + math.log(exponentialSum)
+
+// Components are unlabeled. For display only, rank them by learned momentum mean.
+f_momentum_rank(int component, array<float> means, int componentCount) =>
+    float selectedMean = array.get(means, component * 3)
+    int rank = 0
+
+    for other = 0 to componentCount - 1
+        float otherMean = array.get(means, other * 3)
+        bool strictlyLower = otherMean < selectedMean
+        bool deterministicTieBreak = otherMean == selectedMean and other < component
+        if strictlyLower or deterministicTieBreak
+            rank += 1
+
+    rank
+
+f_regime_name(int rank, int componentCount) =>
+    float ordinal = 2.0 * rank / math.max(componentCount - 1, 1) - 1.0
+    ordinal <= -0.25 ? "Bearish" : ordinal >= 0.25 ? "Bullish" : "Neutral"
+
+string diagnosticsPosition = switch diagnosticsPositionInput
+    "Top Left" => position.top_left
+    "Top Center" => position.top_center
+    "Top Right" => position.top_right
+    "Middle Left" => position.middle_left
+    "Middle Center" => position.middle_center
+    "Middle Right" => position.middle_right
+    "Bottom Left" => position.bottom_left
+    "Bottom Center" => position.bottom_center
+    => position.bottom_right
+
+string diagnosticsTextSize = switch diagnosticsTextSizeInput
+    "Tiny" => size.tiny
+    "Small" => size.small
+    "Normal" => size.normal
+    => size.large
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scale-compatible, dimensionless features
+// ─────────────────────────────────────────────────────────────────────────────
+float oneBarLogReturn = close > 0 and close[1] > 0 ? math.log(close / close[1]) : na
+float momentumLogReturn = close > 0 and close[momentumLength] > 0 ? math.log(close / close[momentumLength]) : na
+float shortVolatility = ta.stdev(oneBarLogReturn, volatilityLength)
+float longVolatility = ta.stdev(oneBarLogReturn, memoryLength)
+float relativeVolumeAverage = ta.sma(volume, volumeLength)
+
+float volatilityDenominator = math.max(nz(longVolatility, 0.0), EPS)
+float rawMomentumFeature = momentumLogReturn / (volatilityDenominator * math.sqrt(momentumLength))
+float rawVolatilityFeature = math.log(math.max(nz(shortVolatility, 0.0), EPS) / volatilityDenominator)
+float rawVolumeFeature = (
+     na(volume) or na(relativeVolumeAverage) or relativeVolumeAverage <= 0.0 ?
+     0.0 : math.log(math.max(volume, EPS) / relativeVolumeAverage)
+)
+
+float featureMomentum = f_clip(rawMomentumFeature, featureClip)
+float featureVolatility = f_clip(rawVolatilityFeature, featureClip)
+float featureVolume = f_clip(rawVolumeFeature, featureClip)
+
+bool featuresReady = (
+     not na(featureMomentum) and not na(featureVolatility) and not na(featureVolume) and
+     not na(longVolatility) and longVolatility > EPS
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Persistent model state
+// ─────────────────────────────────────────────────────────────────────────────
+var array<float> mixtureWeights = array.new_float(nComponents, 1.0 / nComponents)
+var array<float> componentMeans = array.new_float(nComponents * 3, 0.0)
+var array<float> componentVariances = array.new_float(nComponents * 3, 1.0)
+
+// Exponentially weighted sufficient statistics for online EM.
+var array<float> effectiveCounts = array.new_float(nComponents, 0.0)
+var array<float> weightedSums = array.new_float(nComponents * 3, 0.0)
+var array<float> weightedSquareSums = array.new_float(nComponents * 3, 0.0)
+
+var array<float> logProbabilities = array.new_float(nComponents, 0.0)
+var array<float> responsibilities = array.new_float(nComponents, 0.0)
+
+var array<float> seedMomentum = array.new_float(0)
+var array<float> seedVolatility = array.new_float(0)
+var array<float> seedVolume = array.new_float(0)
+
+var bool modelInitialized = false
+var bool initializationConverged = false
+var int onlineObservations = 0
+
+bool justInitialized = false
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Initial batch-EM fit
+// ─────────────────────────────────────────────────────────────────────────────
+if featuresReady and not modelInitialized
+    array.push(seedMomentum, featureMomentum)
+    array.push(seedVolatility, featureVolatility)
+    array.push(seedVolume, featureVolume)
+
+    if array.size(seedMomentum) >= initializationBars
+        int sampleCount = array.size(seedMomentum)
+
+        float globalMean1 = 0.0
+        float globalMean2 = 0.0
+        float globalMean3 = 0.0
+
+        for sample = 0 to sampleCount - 1
+            globalMean1 += array.get(seedMomentum, sample)
+            globalMean2 += array.get(seedVolatility, sample)
+            globalMean3 += array.get(seedVolume, sample)
+
+        globalMean1 /= sampleCount
+        globalMean2 /= sampleCount
+        globalMean3 /= sampleCount
+
+        float globalVariance1 = 0.0
+        float globalVariance2 = 0.0
+        float globalVariance3 = 0.0
+
+        for sample = 0 to sampleCount - 1
+            float d1 = array.get(seedMomentum, sample) - globalMean1
+            float d2 = array.get(seedVolatility, sample) - globalMean2
+            float d3 = array.get(seedVolume, sample) - globalMean3
+            globalVariance1 += d1 * d1
+            globalVariance2 += d2 * d2
+            globalVariance3 += d3 * d3
+
+        globalVariance1 := math.max(globalVariance1 / sampleCount, varianceFloor)
+        globalVariance2 := math.max(globalVariance2 / sampleCount, varianceFloor)
+        globalVariance3 := math.max(globalVariance3 / sampleCount, varianceFloor)
+
+        // Deterministic quantile initialization along momentum, using actual
+        // multivariate observations at those quantiles as initial centers.
+        array<int> sortedMomentumIndices = array.sort_indices(seedMomentum, order.ascending)
+
+        for component = 0 to nComponents - 1
+            float quantile = (component + 0.5) / nComponents
+            int sortedPosition = int(math.round(quantile * (sampleCount - 1)))
+            sortedPosition := math.max(0, math.min(sampleCount - 1, sortedPosition))
+            int sampleIndex = array.get(sortedMomentumIndices, sortedPosition)
+            int base = component * 3
+
+            array.set(componentMeans, base, array.get(seedMomentum, sampleIndex))
+            array.set(componentMeans, base + 1, array.get(seedVolatility, sampleIndex))
+            array.set(componentMeans, base + 2, array.get(seedVolume, sampleIndex))
+
+            array.set(componentVariances, base, globalVariance1)
+            array.set(componentVariances, base + 1, globalVariance2)
+            array.set(componentVariances, base + 2, globalVariance3)
+            array.set(mixtureWeights, component, 1.0 / nComponents)
+
+        array<float> batchCounts = array.new_float(nComponents, 0.0)
+        array<float> batchSums = array.new_float(nComponents * 3, 0.0)
+        array<float> batchSquareSums = array.new_float(nComponents * 3, 0.0)
+        array<float> batchLogProbabilities = array.new_float(nComponents, 0.0)
+        array<float> batchResponsibilities = array.new_float(nComponents, 0.0)
+
+        float previousLogLikelihood = na
+        bool didConverge = false
+
+        for iteration = 0 to initializationIterations - 1
+            array.fill(batchCounts, 0.0)
+            array.fill(batchSums, 0.0)
+            array.fill(batchSquareSums, 0.0)
+
+            float totalLogLikelihood = 0.0
+
+            // E-step: posterior responsibilities for all initialization samples.
+            for sample = 0 to sampleCount - 1
+                float x1 = array.get(seedMomentum, sample)
+                float x2 = array.get(seedVolatility, sample)
+                float x3 = array.get(seedVolume, sample)
+
+                float observationLogLikelihood = f_responsibilities(
+                     x1, x2, x3,
+                     mixtureWeights, componentMeans, componentVariances,
+                     batchLogProbabilities, batchResponsibilities)
+                totalLogLikelihood += observationLogLikelihood
+
+                for component = 0 to nComponents - 1
+                    float responsibility = array.get(batchResponsibilities, component)
+                    int base = component * 3
+
+                    array.set(batchCounts, component,
+                         array.get(batchCounts, component) + responsibility)
+
+                    array.set(batchSums, base,
+                         array.get(batchSums, base) + responsibility * x1)
+                    array.set(batchSums, base + 1,
+                         array.get(batchSums, base + 1) + responsibility * x2)
+                    array.set(batchSums, base + 2,
+                         array.get(batchSums, base + 2) + responsibility * x3)
+
+                    array.set(batchSquareSums, base,
+                         array.get(batchSquareSums, base) + responsibility * x1 * x1)
+                    array.set(batchSquareSums, base + 1,
+                         array.get(batchSquareSums, base + 1) + responsibility * x2 * x2)
+                    array.set(batchSquareSums, base + 2,
+                         array.get(batchSquareSums, base + 2) + responsibility * x3 * x3)
+
+            // M-step: learned weights, means, and diagonal variances.
+            float unnormalizedWeightSum = 0.0
+
+            for component = 0 to nComponents - 1
+                float count = array.get(batchCounts, component)
+                int base = component * 3
+
+                if count > EPS
+                    float mean1 = array.get(batchSums, base) / count
+                    float mean2 = array.get(batchSums, base + 1) / count
+                    float mean3 = array.get(batchSums, base + 2) / count
+
+                    float variance1 = array.get(batchSquareSums, base) / count - mean1 * mean1
+                    float variance2 = array.get(batchSquareSums, base + 1) / count - mean2 * mean2
+                    float variance3 = array.get(batchSquareSums, base + 2) / count - mean3 * mean3
+
+                    array.set(componentMeans, base, mean1)
+                    array.set(componentMeans, base + 1, mean2)
+                    array.set(componentMeans, base + 2, mean3)
+
+                    array.set(componentVariances, base, math.max(variance1, varianceFloor))
+                    array.set(componentVariances, base + 1, math.max(variance2, varianceFloor))
+                    array.set(componentVariances, base + 2, math.max(variance3, varianceFloor))
+                else
+                    // Deterministic recovery for a numerically empty component.
+                    float quantile = (component + 0.5) / nComponents
+                    int sortedPosition = int(math.round(quantile * (sampleCount - 1)))
+                    sortedPosition := math.max(0, math.min(sampleCount - 1, sortedPosition))
+                    int sampleIndex = array.get(sortedMomentumIndices, sortedPosition)
+
+                    array.set(componentMeans, base, array.get(seedMomentum, sampleIndex))
+                    array.set(componentMeans, base + 1, array.get(seedVolatility, sampleIndex))
+                    array.set(componentMeans, base + 2, array.get(seedVolume, sampleIndex))
+                    array.set(componentVariances, base, globalVariance1)
+                    array.set(componentVariances, base + 1, globalVariance2)
+                    array.set(componentVariances, base + 2, globalVariance3)
+
+                float regularizedWeight = math.max(count / sampleCount, minimumWeight)
+                array.set(mixtureWeights, component, regularizedWeight)
+                unnormalizedWeightSum += regularizedWeight
+
+            for component = 0 to nComponents - 1
+                array.set(mixtureWeights, component,
+                     array.get(mixtureWeights, component) / math.max(unnormalizedWeightSum, EPS))
+
+            if not na(previousLogLikelihood)
+                float relativeChange = math.abs(totalLogLikelihood - previousLogLikelihood) /
+                     (1.0 + math.abs(previousLogLikelihood))
+                if relativeChange <= convergenceTolerance
+                    didConverge := true
+                    break
+
+            previousLogLikelihood := totalLogLikelihood
+
+        initializationConverged := didConverge
+
+        // Initialize online sufficient statistics consistently with the fitted model.
+        for component = 0 to nComponents - 1
+            float pseudoCount = math.max(array.get(mixtureWeights, component) * memoryLength, EPS)
+            int base = component * 3
+
+            float mean1 = array.get(componentMeans, base)
+            float mean2 = array.get(componentMeans, base + 1)
+            float mean3 = array.get(componentMeans, base + 2)
+
+            float variance1 = array.get(componentVariances, base)
+            float variance2 = array.get(componentVariances, base + 1)
+            float variance3 = array.get(componentVariances, base + 2)
+
+            array.set(effectiveCounts, component, pseudoCount)
+
+            array.set(weightedSums, base, pseudoCount * mean1)
+            array.set(weightedSums, base + 1, pseudoCount * mean2)
+            array.set(weightedSums, base + 2, pseudoCount * mean3)
+
+            array.set(weightedSquareSums, base, pseudoCount * (variance1 + mean1 * mean1))
+            array.set(weightedSquareSums, base + 1, pseudoCount * (variance2 + mean2 * mean2))
+            array.set(weightedSquareSums, base + 2, pseudoCount * (variance3 + mean3 * mean3))
+
+        modelInitialized := true
+        justInitialized := true
+        onlineObservations := 0
+
+        array.clear(seedMomentum)
+        array.clear(seedVolatility)
+        array.clear(seedVolume)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Online EM: exponentially weighted E-step and exact sufficient-statistic M-step
+// ─────────────────────────────────────────────────────────────────────────────
+float currentLogLikelihood = na
+
+if modelInitialized and featuresReady
+    currentLogLikelihood := f_responsibilities(
+         featureMomentum, featureVolatility, featureVolume,
+         mixtureWeights, componentMeans, componentVariances,
+         logProbabilities, responsibilities)
+
+    // Learn only from confirmed bars. The live bar may be classified intrabar,
+    // but model parameters are committed only when that bar closes.
+    if barstate.isconfirmed and not justInitialized
+        float decay = math.exp(-1.0 / memoryLength)
+
+        for component = 0 to nComponents - 1
+            float responsibility = array.get(responsibilities, component)
+            int base = component * 3
+
+            float updatedCount = decay * array.get(effectiveCounts, component) + responsibility
+            array.set(effectiveCounts, component, updatedCount)
+
+            array.set(weightedSums, base,
+                 decay * array.get(weightedSums, base) + responsibility * featureMomentum)
+            array.set(weightedSums, base + 1,
+                 decay * array.get(weightedSums, base + 1) + responsibility * featureVolatility)
+            array.set(weightedSums, base + 2,
+                 decay * array.get(weightedSums, base + 2) + responsibility * featureVolume)
+
+            array.set(weightedSquareSums, base,
+                 decay * array.get(weightedSquareSums, base) + responsibility * featureMomentum * featureMomentum)
+            array.set(weightedSquareSums, base + 1,
+                 decay * array.get(weightedSquareSums, base + 1) + responsibility * featureVolatility * featureVolatility)
+            array.set(weightedSquareSums, base + 2,
+                 decay * array.get(weightedSquareSums, base + 2) + responsibility * featureVolume * featureVolume)
+
+        float totalEffectiveCount = 0.0
+        for component = 0 to nComponents - 1
+            totalEffectiveCount += array.get(effectiveCounts, component)
+
+        float regularizedWeightSum = 0.0
+
+        for component = 0 to nComponents - 1
+            float count = math.max(array.get(effectiveCounts, component), EPS)
+            int base = component * 3
+
+            float mean1 = array.get(weightedSums, base) / count
+            float mean2 = array.get(weightedSums, base + 1) / count
+            float mean3 = array.get(weightedSums, base + 2) / count
+
+            float variance1 = array.get(weightedSquareSums, base) / count - mean1 * mean1
+            float variance2 = array.get(weightedSquareSums, base + 1) / count - mean2 * mean2
+            float variance3 = array.get(weightedSquareSums, base + 2) / count - mean3 * mean3
+
+            array.set(componentMeans, base, mean1)
+            array.set(componentMeans, base + 1, mean2)
+            array.set(componentMeans, base + 2, mean3)
+
+            array.set(componentVariances, base, math.max(variance1, varianceFloor))
+            array.set(componentVariances, base + 1, math.max(variance2, varianceFloor))
+            array.set(componentVariances, base + 2, math.max(variance3, varianceFloor))
+
+            float regularizedWeight = math.max(count / math.max(totalEffectiveCount, EPS), minimumWeight)
+            array.set(mixtureWeights, component, regularizedWeight)
+            regularizedWeightSum += regularizedWeight
+
+        for component = 0 to nComponents - 1
+            array.set(mixtureWeights, component,
+                 array.get(mixtureWeights, component) / math.max(regularizedWeightSum, EPS))
+
+        onlineObservations += 1
+
+        // Re-evaluate the current observation after the M-step.
+        currentLogLikelihood := f_responsibilities(
+             featureMomentum, featureVolatility, featureVolume,
+             mixtureWeights, componentMeans, componentVariances,
+             logProbabilities, responsibilities)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Genuine GMM-derived regime oscillator
+// ─────────────────────────────────────────────────────────────────────────────
+float rawRegimeScore = na
+float maximumPosterior = na
+float entropyCertainty = na
+int winningComponent = na
+int winningRank = na
+int regimeClass = na
+string regimeName = modelInitialized ? "Unavailable" : "Warm-up"
+
+if modelInitialized and featuresReady
+    float expectedOrdinal = 0.0
+    float entropy = 0.0
+    float bestPosterior = -1.0
+    int bestComponent = 0
+
+    for component = 0 to nComponents - 1
+        float posterior = array.get(responsibilities, component)
+        int rank = f_momentum_rank(component, componentMeans, nComponents)
+        float componentOrdinal = 2.0 * rank / math.max(nComponents - 1, 1) - 1.0
+
+        expectedOrdinal += posterior * componentOrdinal
+        entropy -= posterior * math.log(math.max(posterior, EPS))
+
+        if posterior > bestPosterior
+            bestPosterior := posterior
+            bestComponent := component
+
+    int bestRank = f_momentum_rank(bestComponent, componentMeans, nComponents)
+    float bestOrdinal = 2.0 * bestRank / math.max(nComponents - 1, 1) - 1.0
+
+    rawRegimeScore := expectedOrdinal * 100.0
+    maximumPosterior := bestPosterior
+    entropyCertainty := math.max(0.0, math.min(1.0, 1.0 - entropy / math.log(nComponents)))
+    winningComponent := bestComponent
+    winningRank := bestRank
+    regimeClass := bestOrdinal <= -0.25 ? -1 : bestOrdinal >= 0.25 ? 1 : 0
+    regimeName := f_regime_name(bestRank, nComponents)
+
+float oscillator = ta.ema(rawRegimeScore, smoothing)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plotting
+// ─────────────────────────────────────────────────────────────────────────────
+zeroLine = plot(0.0, "Zero", color=color.gray, linewidth=1)
+
+color regimeBackground = (
+     regimeClass == -1 ? color.new(bearColor, 94) :
+     regimeClass == 1 ? color.new(bullColor, 94) : color.new(neutralColor, 95)
+)
+bgcolor(showRegime and modelInitialized and not na(regimeClass) ? regimeBackground : na)
+
+// Positive gradient.
+p1 = plot(showGradient and oscillator > 0 ? oscillator : 0, display=display.none)
+p2 = plot(showGradient and oscillator > 0 ? oscillator * 0.875 : 0, display=display.none)
+p3 = plot(showGradient and oscillator > 0 ? oscillator * 0.750 : 0, display=display.none)
+p4 = plot(showGradient and oscillator > 0 ? oscillator * 0.625 : 0, display=display.none)
+p5 = plot(showGradient and oscillator > 0 ? oscillator * 0.500 : 0, display=display.none)
+p6 = plot(showGradient and oscillator > 0 ? oscillator * 0.375 : 0, display=display.none)
+p7 = plot(showGradient and oscillator > 0 ? oscillator * 0.250 : 0, display=display.none)
+p8 = plot(showGradient and oscillator > 0 ? oscillator * 0.125 : 0, display=display.none)
+
+fill(p1, p2, color.new(bullColor, 76))
+fill(p2, p3, color.new(bullColor, 80))
+fill(p3, p4, color.new(bullColor, 84))
+fill(p4, p5, color.new(bullColor, 87))
+fill(p5, p6, color.new(bullColor, 90))
+fill(p6, p7, color.new(bullColor, 93))
+fill(p7, p8, color.new(bullColor, 96))
+fill(p8, zeroLine, color.new(bullColor, 98))
+
+// Negative gradient.
+n1 = plot(showGradient and oscillator < 0 ? oscillator : 0, display=display.none)
+n2 = plot(showGradient and oscillator < 0 ? oscillator * 0.875 : 0, display=display.none)
+n3 = plot(showGradient and oscillator < 0 ? oscillator * 0.750 : 0, display=display.none)
+n4 = plot(showGradient and oscillator < 0 ? oscillator * 0.625 : 0, display=display.none)
+n5 = plot(showGradient and oscillator < 0 ? oscillator * 0.500 : 0, display=display.none)
+n6 = plot(showGradient and oscillator < 0 ? oscillator * 0.375 : 0, display=display.none)
+n7 = plot(showGradient and oscillator < 0 ? oscillator * 0.250 : 0, display=display.none)
+n8 = plot(showGradient and oscillator < 0 ? oscillator * 0.125 : 0, display=display.none)
+
+fill(n1, n2, color.new(bearColor, 76))
+fill(n2, n3, color.new(bearColor, 80))
+fill(n3, n4, color.new(bearColor, 84))
+fill(n4, n5, color.new(bearColor, 87))
+fill(n5, n6, color.new(bearColor, 90))
+fill(n6, n7, color.new(bearColor, 93))
+fill(n7, n8, color.new(bearColor, 96))
+fill(n8, zeroLine, color.new(bearColor, 98))
+
+color histogramColor = (
+     oscillator >= 0 ?
+     color.from_gradient(oscillator, 0.0, 100.0, color.new(bullColor, 100), bullColor) :
+     color.from_gradient(oscillator, -100.0, 0.0, bearColor, color.new(bearColor, 100))
+)
+
+plot(showHistogram ? oscillator : na, "GMM regime histogram", color=histogramColor,
+     linewidth=3, style=plot.style_histogram)
+
+color mainColor = oscillator >= 0 ? color.new(bullColor, 0) : color.new(bearColor, 0)
+plot(oscillator, "Posterior expected regime", color=mainColor, linewidth=2)
+plot(showCertainty and modelInitialized ? entropyCertainty * 100.0 : na,
+     "Entropy assignment certainty", color=color.new(color.black, 0), linewidth=2)
+
+color priceBarColor = regimeClass == 1 ? bullColor : regimeClass == -1 ? bearColor : neutralColor
+barcolor(barColoring and modelInitialized ? priceBarColor : na)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Diagnostics table
+// ─────────────────────────────────────────────────────────────────────────────
+// The table is deliberately larger than the compact view so one persistent table
+// can support all detail modes and all 2–5 component configurations.
+var table diagnostics = table.new(diagnosticsPosition, 5, 15,
+     bgcolor=color.new(color.black, diagnosticsBackgroundTransparency),
+     frame_color=color.new(color.white, 80), frame_width=1,
+     border_color=color.new(color.white, 90), border_width=1)
+
+bool diagnosticsVisible = showDiagnostics and (showDiagnosticsDuringWarmup or modelInitialized)
+
+if barstate.islast
+    table.clear(diagnostics, 0, 0, 4, 14)
+    table.set_position(diagnostics, diagnosticsPosition)
+    table.set_bgcolor(diagnostics, diagnosticsVisible ? color.new(color.black, diagnosticsBackgroundTransparency) : na)
+    table.set_frame_color(diagnostics, diagnosticsVisible ? color.new(color.white, 80) : na)
+    table.set_border_color(diagnostics, diagnosticsVisible ? color.new(color.white, 90) : na)
+
+    if diagnosticsVisible
+        color tableBackground = color.new(color.black, diagnosticsBackgroundTransparency)
+        color headerBackground = color.new(color.gray, math.max(diagnosticsBackgroundTransparency - 12, 0))
+        color labelColor = color.silver
+        color valueColor = color.white
+
+        string statusText = (
+             modelInitialized ? "ONLINE EM · " + str.tostring(onlineObservations) + " updates" :
+             "WARM-UP " + str.tostring(array.size(seedMomentum)) + "/" + str.tostring(initializationBars)
+        )
+        string convergenceText = modelInitialized ? (initializationConverged ? "Yes" : "Iteration limit") : "—"
+        string componentText = (
+             modelInitialized and not na(winningComponent) ?
+             "C" + str.tostring(winningComponent + 1) + " · rank " + str.tostring(winningRank + 1) : "—"
+        )
+        string posteriorText = modelInitialized and not na(maximumPosterior) ?
+             str.tostring(maximumPosterior * 100.0, "#.0") + "%" : "—"
+        string certaintyText = modelInitialized and not na(entropyCertainty) ?
+             str.tostring(entropyCertainty * 100.0, "#.0") + "%" : "—"
+        string nllText = modelInitialized and not na(currentLogLikelihood) ?
+             str.tostring(-currentLogLikelihood, "#.000") : "—"
+
+        color regimeTextColor = regimeClass == -1 ? bearColor : regimeClass == 1 ? bullColor : valueColor
+
+        table.cell(diagnostics, 0, 0, "GMM DIAGNOSTICS",
+             text_color=color.white, text_size=diagnosticsTextSize,
+             bgcolor=headerBackground, text_halign=text.align_left)
+        table.cell(diagnostics, 1, 0, diagnosticsDetailLevel,
+             text_color=color.silver, text_size=diagnosticsTextSize,
+             bgcolor=headerBackground, text_halign=text.align_right)
+        if diagnosticsDetailLevel == "Full Components"
+            for column = 2 to 4
+                table.cell(diagnostics, column, 0, "", bgcolor=headerBackground)
+
+        table.cell(diagnostics, 0, 1, "Model", text_color=labelColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+        table.cell(diagnostics, 1, 1, statusText, text_color=valueColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+
+        table.cell(diagnostics, 0, 2, "Regime", text_color=labelColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+        table.cell(diagnostics, 1, 2, regimeName, text_color=regimeTextColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+
+        table.cell(diagnostics, 0, 3, "Max posterior", text_color=labelColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+        table.cell(diagnostics, 1, 3, posteriorText, text_color=valueColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+
+        table.cell(diagnostics, 0, 4, "Entropy certainty", text_color=labelColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+        table.cell(diagnostics, 1, 4, certaintyText, text_color=valueColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+
+        bool showStandardRows = diagnosticsDetailLevel == "Standard" or diagnosticsDetailLevel == "Full Components"
+        bool showComponentRows = diagnosticsDetailLevel == "Full Components"
+
+        if showStandardRows
+            table.cell(diagnostics, 0, 5, "Initial convergence", text_color=labelColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+            table.cell(diagnostics, 1, 5, convergenceText, text_color=valueColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+
+            table.cell(diagnostics, 0, 6, "Active component", text_color=labelColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+            table.cell(diagnostics, 1, 6, componentText, text_color=valueColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+
+            table.cell(diagnostics, 0, 7, "Current NLL", text_color=labelColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+            table.cell(diagnostics, 1, 7, nllText, text_color=valueColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+
+        if showComponentRows
+            table.cell(diagnostics, 0, 8, "Component", text_color=color.white, text_size=diagnosticsTextSize, bgcolor=headerBackground, text_halign=text.align_center)
+            table.cell(diagnostics, 1, 8, "Weight", text_color=color.white, text_size=diagnosticsTextSize, bgcolor=headerBackground, text_halign=text.align_center)
+            table.cell(diagnostics, 2, 8, "μ Mom", text_color=color.white, text_size=diagnosticsTextSize, bgcolor=headerBackground, text_halign=text.align_center)
+            table.cell(diagnostics, 3, 8, "μ Vol", text_color=color.white, text_size=diagnosticsTextSize, bgcolor=headerBackground, text_halign=text.align_center)
+            table.cell(diagnostics, 4, 8, "μ RVol", text_color=color.white, text_size=diagnosticsTextSize, bgcolor=headerBackground, text_halign=text.align_center)
+
+            for component = 0 to nComponents - 1
+                int row = 9 + component
+                int rank = modelInitialized ? f_momentum_rank(component, componentMeans, nComponents) : component
+                float ordinal = 2.0 * rank / math.max(nComponents - 1, 1) - 1.0
+                color componentColor = ordinal <= -0.25 ? bearColor : ordinal >= 0.25 ? bullColor : color.white
+                bool isWinner = modelInitialized and component == winningComponent
+                string componentLabel = (isWinner ? "▶ " : "") + "C" + str.tostring(component + 1)
+                int base = component * 3
+
+                string weightText = modelInitialized ? str.tostring(array.get(mixtureWeights, component) * 100.0, "#.0") + "%" : "—"
+                string meanMomentumText = modelInitialized ? str.tostring(array.get(componentMeans, base), "#.00") : "—"
+                string meanVolatilityText = modelInitialized ? str.tostring(array.get(componentMeans, base + 1), "#.00") : "—"
+                string meanVolumeText = modelInitialized ? str.tostring(array.get(componentMeans, base + 2), "#.00") : "—"
+
+                table.cell(diagnostics, 0, row, componentLabel, text_color=componentColor, text_size=diagnosticsTextSize, bgcolor=tableBackground)
+                table.cell(diagnostics, 1, row, weightText, text_color=valueColor, text_size=diagnosticsTextSize, bgcolor=tableBackground, text_halign=text.align_right)
+                table.cell(diagnostics, 2, row, meanMomentumText, text_color=valueColor, text_size=diagnosticsTextSize, bgcolor=tableBackground, text_halign=text.align_right)
+                table.cell(diagnostics, 3, row, meanVolatilityText, text_color=valueColor, text_size=diagnosticsTextSize, bgcolor=tableBackground, text_halign=text.align_right)
+                table.cell(diagnostics, 4, row, meanVolumeText, text_color=valueColor, text_size=diagnosticsTextSize, bgcolor=tableBackground, text_halign=text.align_right)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Alerts
+// ─────────────────────────────────────────────────────────────────────────────
+alertcondition(ta.crossover(oscillator, 0.0), "GMM bullish cross",
+     "The GMM posterior expected regime crossed above zero.")
+alertcondition(ta.crossunder(oscillator, 0.0), "GMM bearish cross",
+     "The GMM posterior expected regime crossed below zero.")
+alertcondition(modelInitialized and not na(regimeClass[1]) and regimeClass != regimeClass[1],
+     "GMM regime change", "The highest-posterior GMM regime class changed.")
