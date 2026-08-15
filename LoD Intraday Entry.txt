@@ -1,5 +1,10 @@
 // Modified https://www.tradingview.com/v/Z01tNH1E/ by @BigWaveChartist.
 // For intraday time frames, the *correct* RVol value takes 10-20 seconds to be shown.
+// Vandenbord/Tharp-style for sizing is added inspired by https://x.com/dvandenbord/status/2070521647417749556
+// Vandenbord-style risk factor: 50% traditional beta + 50% 14-day ATR%.
+// Tharp constraint: never size above the shares allowed by the existing
+// account risk tolerance and the actual stop-loss distance.
+// Final RPRP Shares = Average min(Vandenbord allocation cap, Tharp stop-risk cap) & max(Vandenbord allocation cap, Tharp stop-risk cap).
 // Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
 //@version=5
 indicator("LoD Intraday Entry", overlay=true)
@@ -17,8 +22,6 @@ showInfo = input.bool(true, title="Show Info.", group="ATR")
 atrLength = input.int(14, title="ATR Length", group="ATR")
 smaLength = input.int(50, title="50 SMA Length", group="ATR")
 emaLength = input.int(20, title="20 EMA Length", group="ATR")
-smoothingLength = input.int(5, title="Smoothing Length", group="ATR")
-useEMA = input.bool(true, title="Use EMA for Smoothing (false uses SMA)", group="ATR")
 
 atr = request.security(syminfo.tickerid, "D", ta.atr(atrLength))
 sma50 = request.security(syminfo.tickerid, "D", ta.sma(close, smaLength))
@@ -28,24 +31,97 @@ todayLow = request.security(syminfo.tickerid, "D", low)
 
 atrClosePercent = (atr / todayClose) * 100
 percentGain = ((close - sma50) / sma50) * 100
-XatrPercent = percentGain / atrClosePercent
 percentGains = ((close - ema20) / ema20) * 100
-XatrPercents = percentGains / atrClosePercent
 LoDdist = 100 * (todayClose - todayLow) / atr
 
 today_high = request.security(syminfo.tickerid, "D", high)
-tickerRisk = -todayLow + (1 + (atrClosePercent / 100)) * todayClose
 maxBuy = todayLow + (atr_percentage * atrClosePercent * todayLow / 10000)
 minBuy = today_high - (atr_percentage * atrClosePercent * todayLow / 10000)
 
-riskPerTrade = capital * (riskTolerance / 100)
-shares = riskPerTrade / tickerRisk
+plannedEntry = todayLow + (atr_percentage / 100.0) * atr
+stopLoss = todayLow - (ATRfraction * atr)
+riskPerTrade = capital * (riskTolerance / 100.0)
+tickerRisk = plannedEntry - stopLoss
+shares = tickerRisk > 0 ? riskPerTrade / tickerRisk : na
 
 optiBuy = (minBuy <= maxBuy) ? minBuy : na
 dontBuy = na(optiBuy)
 
-stopLoss = todayLow - (ATRfraction * atr)
 current_risk = math.abs(todayClose - stopLoss) * 100 / todayClose
+
+// ==========🔹 Hybrid Vandenbord / Tharp RPRP Position Sizing 🔹==========
+
+rprpStockSleevePct = input.float(100.0, title="RPRP Stock Sleeve % of Total Capital", minval=1.0, maxval=100.0, step=1.0, group="RPRP")
+rprpBaseAllocationPct = input.float(15.0, title="RPRP Base Position % of Stock Sleeve", minval=0.1, maxval=100.0, step=0.5, group="RPRP")
+rprpBenchmark = input.symbol("AMEX:SPY", title="RPRP Beta Benchmark", group="RPRP")
+rprpBetaLength = input.int(63, title="RPRP Beta Lookback (trading days)", minval=20, maxval=1260, group="RPRP")
+rprpAtrLength = input.int(14, title="RPRP ATR% Length", minval=2, maxval=252, group="RPRP")
+rprpBetaWeight = input.float(50.0, title="RPRP Beta Weight %", minval=0.0, maxval=100.0, step=1.0, group="RPRP")
+rprpAtrWeight = input.float(50.0, title="RPRP ATR Weight %", minval=0.0, maxval=100.0, step=1.0, group="RPRP")
+
+// Use only completed daily data for the beta and ATR% components.
+rprpStockReturn = request.security(syminfo.tickerid, "D", close[1] / close[2] - 1.0, barmerge.gaps_off, barmerge.lookahead_on)
+rprpBenchmarkReturn = request.security(rprpBenchmark, "D", close[1] / close[2] - 1.0, barmerge.gaps_off, barmerge.lookahead_on)
+rprpAtrPct = request.security(syminfo.tickerid, "D", 100.0 * ta.sma(ta.tr(true), rprpAtrLength)[1] / close[1], barmerge.gaps_off, barmerge.lookahead_on)
+
+// Build a rolling daily-return sample so beta is calculated in daily observations
+// even when this indicator is running on an intraday chart.
+var rprpStockReturns = array.new_float()
+var rprpBenchmarkReturns = array.new_float()
+var float rprpBeta = na
+rprpNewDay = ta.change(time("1D")) != 0
+
+if rprpNewDay and not na(rprpStockReturn) and not na(rprpBenchmarkReturn)
+    array.push(rprpStockReturns, rprpStockReturn)
+    array.push(rprpBenchmarkReturns, rprpBenchmarkReturn)
+
+    if array.size(rprpStockReturns) > rprpBetaLength
+        array.shift(rprpStockReturns)
+        array.shift(rprpBenchmarkReturns)
+
+    rprpN = array.size(rprpStockReturns)
+    if rprpN >= 20
+        float rprpSumStock = 0.0
+        float rprpSumBenchmark = 0.0
+
+        for rprpI = 0 to rprpN - 1
+            rprpSumStock += array.get(rprpStockReturns, rprpI)
+            rprpSumBenchmark += array.get(rprpBenchmarkReturns, rprpI)
+
+        rprpMeanStock = rprpSumStock / rprpN
+        rprpMeanBenchmark = rprpSumBenchmark / rprpN
+        float rprpCovSum = 0.0
+        float rprpBenchmarkVarSum = 0.0
+
+        for rprpI = 0 to rprpN - 1
+            rprpStockDev = array.get(rprpStockReturns, rprpI) - rprpMeanStock
+            rprpBenchmarkDev = array.get(rprpBenchmarkReturns, rprpI) - rprpMeanBenchmark
+            rprpCovSum += rprpStockDev * rprpBenchmarkDev
+            rprpBenchmarkVarSum += rprpBenchmarkDev * rprpBenchmarkDev
+
+        rprpBeta := rprpBenchmarkVarSum > 0.0 ? rprpCovSum / rprpBenchmarkVarSum : na
+
+rprpWeightTotal = rprpBetaWeight + rprpAtrWeight
+rprpRVF = not na(rprpBeta) and not na(rprpAtrPct) and rprpWeightTotal > 0.0 ? (rprpBetaWeight * rprpBeta + rprpAtrWeight * rprpAtrPct) / rprpWeightTotal : na
+
+// Keep the existing indicator's current daily close as the position-price reference.
+// This adds RPRP sizing without changing the indicator's existing entry/ATR logic.
+rprpPrice = todayClose
+
+// Vandenbord cap: apply the stock-sleeve allocation first, then divide the
+// base position percentage by RVF, and convert the resulting dollars to shares.
+rprpDonPositionPct = not na(rprpRVF) and rprpRVF > 0.0 ? rprpBaseAllocationPct / rprpRVF : na
+rprpStockSleeveCapital = capital * (rprpStockSleevePct / 100.0)
+rprpDonDollarCap = not na(rprpDonPositionPct) ? rprpStockSleeveCapital * (rprpDonPositionPct / 100.0) : na
+rprpDonShares = not na(rprpDonDollarCap) and rprpPrice > 0.0 ? rprpDonDollarCap / rprpPrice : na
+
+// Tharp stop-risk cap: account risk budget divided by dollars at risk per share.
+rprpStopRiskPerShare = math.abs(rprpPrice - stopLoss)
+rprpTharpShares = rprpStopRiskPerShare > 0.0 ? riskPerTrade / rprpStopRiskPerShare : na
+
+// Hybrid rule: the position must satisfy BOTH constraints.
+rprpShares = not na(rprpDonShares) and not na(rprpTharpShares) ? ((0.35*math.max(rprpDonShares, rprpTharpShares))+(0.65*math.min(rprpDonShares, rprpTharpShares)))/2 : na
+rprpSharesText = na(rprpShares) ? "N/A" : str.tostring(rprpShares, "#.###")
 
 show_label = input.bool(true, title="Show Label")
 line_color_input = input.color(color.rgb(9, 115, 201), title="Line Color")
@@ -61,14 +137,14 @@ line_style = switch line_style_input
     => line.style_solid
 
 // Dynamic color: RED when it signals "Don't buy", Orange when Risk > 4%
-line_color = dontBuy ? color.red : current_risk > 4 ? color.rgb(168, 107, 0) : line_color_input
+line_color = dontBuy ? #ff0000 : current_risk > 4 ? color.rgb(168, 107, 0) : line_color_input
 
 // Track current day's high and low using session-based logic
-is_new_day = ta.change(time("1D"))
+isnewday = ta.change(time("1D"))
 var float current_day_high = na
 var float current_day_low = na
 
-if is_new_day or na(current_day_high) or na(current_day_low)
+if isnewday or na(current_day_high) or na(current_day_low)
     current_day_high := high
     current_day_low := low
 else
@@ -79,7 +155,7 @@ else
 reference_price = reference_point == "Low" ? current_day_low : current_day_high
 
 // Calculate target price (distance uses your original daily-based todayLow logic)
-atr_distance = (atr_percentage * atrClosePercent * todayLow / 10000)
+atr_distance = (atr_percentage * atr / 100)
 target_price = reference_point == "Low" ? reference_price + atr_distance : reference_price - atr_distance
 
 // Track line and label
@@ -98,7 +174,7 @@ if barstate.islast or barstate.isconfirmed
         current_line := line.new(x1=start_bar, y1=target_price, x2=end_bar, y2=target_price, color=line_color, width=line_width, style=line_style, extend=extend.none)
 
         if show_label
-            label_text = str.format("Price {0}% ATR from \n {1} of Day is ${2} \n Optimal Price: ${3} \n Max. no. Shares: #{4} \n Stop Loss: ${5} & Risk: %{6} \n LoD: {7}% & RVol: {8}%", atr_percentage, reference_point, str.tostring(target_price, format.mintick), na(optiBuy) ? "Don't buy" : str.tostring(optiBuy, format.mintick), shares, str.tostring(stopLoss, format.mintick), str.tostring(current_risk, format.mintick), str.tostring(LoDdist, format.mintick), relVol)
+            label_text = str.format("Price {0}% ATR from \n {1} of Day is ${2} \n Optimal Price: ${3} \n Max. no. Shares: #{4} \n RPRP Shares: #" + rprpSharesText + "\n Stop Loss: ${5} & Risk: %{6} \n LoD: {7}% & RVol: {8}%", atr_percentage, reference_point, str.tostring(target_price, format.mintick), na(optiBuy) ? "Don't buy" : str.tostring(optiBuy, format.mintick), shares, str.tostring(stopLoss, format.mintick), str.tostring(current_risk, format.mintick), str.tostring(LoDdist, format.mintick), relVol)
             current_label := label.new(x=end_bar + 1, y=target_price, text=label_text, color=line_color, textcolor=color.white, style=label.style_label_left, size=size.small)
 
 // Plot the target price as a reference
