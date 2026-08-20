@@ -1,56 +1,196 @@
 // Modified https://www.tradingview.com/v/Z01tNH1E/ by @BigWaveChartist.
+// inspired by @jfsrev: https://x.com/jfsrev/status/1856232860107350147
+// and https://x.com/jfsrev/status/1788135099273281737
 // For intraday time frames, the *correct* RVol value takes 10-20 seconds to be shown.
-// Vandenbord/Tharp-style for sizing is added inspired by https://x.com/dvandenbord/status/2070521647417749556
+// Vandenbord/VanTharp-style for sizing is added inspired by https://x.com/dvandenbord/status/2070521647417749556
 // Vandenbord-style risk factor: 50% traditional beta + 50% 14-day ATR%.
-// Tharp constraint: never size above the shares allowed by the existing
+// VanTharp constraint: never size above the shares allowed by the existing
 // account risk tolerance and the actual stop-loss distance.
-// Final RPRP Shares = Average min(Vandenbord allocation cap, Tharp stop-risk cap) & max(Vandenbord allocation cap, Tharp stop-risk cap).
-// Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
+// Final RPRP Shares = Average min(Vandenbord allocation cap, VanTharp stop-risk cap) & max(Vandenbord allocation cap, VanTharp stop-risk cap).
+//
+// INTRADAY POSITION SIZING:
+// 1) optiBuy is only a suggested favorable entry location.
+// 2) Actual sizing uses the CURRENT intraday price.
+// 3) Entry is eligible while current price remains inside the ATR threshold.
+// 4) Current entry-to-stop distance must remain below one full ATR.
+// 5) Stop = current LoD - ATR stop buffer.
+// 6) Shares = account risk dollars / actual current entry-to-stop distance.
+//
+// Disclaimer: This indicator is for educational purposes only and is not financial advice.
+// Trading involves risk; use it at your own discretion and responsibility.
+
 //@version=5
 indicator("LoD Intraday Entry", overlay=true)
 
+//---------------------------------------------------------
+// Relative Volume
+//---------------------------------------------------------
 symtick = syminfo.tickerid
 len = input(50, "Volume MA Length", group="$Vol.")
 vol = request.security(symtick, "D", volume)
-ma  = request.security(symtick, "D", ta.sma(vol, len))
+ma = request.security(symtick, "D", ta.sma(vol, len))
 relVol = (100 * vol) / ma
+
+//---------------------------------------------------------
+// ATR / Risk Inputs
+//---------------------------------------------------------
 capital = input.float(title="Total Capital $", defval=100000, minval=1, group="ATR")
-riskTolerance = input.float(title="Risk Tolerance %", defval=2, minval=0.1, maxval=10, step=0.1, group="ATR")
-ATRfraction = input.float(title="Percentage of ATR below the LoD", defval=0.33, minval=0.01, maxval=1, step=0.01, group="ATR")
-atr_percentage = input.float(60.0, title="ATR Percentage %", minval=0.1, maxval=200.0, step=0.1)
+riskTolerance = input.float(title="Risk Tolerance %", defval=0.15, minval=0.01, maxval=10, step=0.01, group="ATR")
+ATRfraction = input.float(title="Percentage of ATR below the LoD", defval=0.1, minval=0.01, maxval=1, step=0.01, group="ATR")
+atr_percentage = input.float(60.0, title="ATR Percentage %", minval=0.1, maxval=200.0, step=0.1, group="ATR")
 showInfo = input.bool(true, title="Show Info.", group="ATR")
 atrLength = input.int(14, title="ATR Length", group="ATR")
 smaLength = input.int(50, title="50 SMA Length", group="ATR")
 emaLength = input.int(20, title="20 EMA Length", group="ATR")
 
+//---------------------------------------------------------
+// Daily Reference Data
+//---------------------------------------------------------
 atr = request.security(syminfo.tickerid, "D", ta.atr(atrLength))
 sma50 = request.security(syminfo.tickerid, "D", ta.sma(close, smaLength))
 ema20 = request.security(syminfo.tickerid, "D", ta.ema(close, emaLength))
 todayClose = request.security(syminfo.tickerid, "D", close)
-todayLow = request.security(syminfo.tickerid, "D", low)
 
 atrClosePercent = (atr / todayClose) * 100
 percentGain = ((close - sma50) / sma50) * 100
 percentGains = ((close - ema20) / ema20) * 100
-LoDdist = 100 * (todayClose - todayLow) / atr
 
-today_high = request.security(syminfo.tickerid, "D", high)
-maxBuy = todayLow + (atr_percentage * atrClosePercent * todayLow / 10000)
-minBuy = today_high - (atr_percentage * atrClosePercent * todayLow / 10000)
+//---------------------------------------------------------
+// Track Current Intraday High / Low
+//---------------------------------------------------------
+isnewday = ta.change(time("1D")) != 0
+var float current_day_high = na
+var float current_day_low = na
 
-plannedEntry = todayLow + (atr_percentage / 100.0) * atr
-stopLoss = todayLow - (ATRfraction * atr)
+if isnewday or na(current_day_high) or na(current_day_low)
+    current_day_high := high
+    current_day_low := low
+else
+    current_day_high := math.max(current_day_high, high)
+    current_day_low := math.min(current_day_low, low)
+
+//---------------------------------------------------------
+// Display / Reference Inputs
+//---------------------------------------------------------
+show_label = input.bool(true, title="Show Label")
+line_color_input = input.color(color.rgb(9, 115, 201), title="Line Color")
+line_width = input.int(2, title="Line Width", minval=1, maxval=5)
+line_length = input.int(10, title="Line Length (bars)", minval=1, maxval=50)
+reference_point = input.string("Low", title="Reference Point", options=["Low", "High"])
+line_style_input = input.string("Solid", title="Line Style", options=["Solid", "Dashed", "Dotted"])
+
+line_style = switch line_style_input
+    "Solid"  => line.style_solid
+    "Dashed" => line.style_dashed
+    "Dotted" => line.style_dotted
+    => line.style_solid
+
+//---------------------------------------------------------
+// Current Reference Price
+//---------------------------------------------------------
+reference_price = reference_point == "Low" ? current_day_low : current_day_high
+
+//---------------------------------------------------------
+// ATR Threshold
+//---------------------------------------------------------
+atr_distance = (atr_percentage * atr / 100.0)
+
+threshold_price = reference_point == "Low" ? reference_price + atr_distance : reference_price - atr_distance
+
+//---------------------------------------------------------
+// Suggested Price
+// It is ONLY a suggested favorable location.
+// It is NOT the required execution price.
+//---------------------------------------------------------
+maxBuy = current_day_low + atr_distance
+minBuy = current_day_high - atr_distance
+optiBuy = minBuy <= maxBuy ? (reference_point == "Low" ? minBuy : maxBuy) : na
+
+//---------------------------------------------------------
+// Structural Stop
+//
+// Long:
+//     Stop = LoD - ATRfraction * ATR
+//
+// High-reference mode is retained symmetrically so the
+// original indicator style/functionality is not removed.
+//---------------------------------------------------------
+stopLoss = reference_point == "Low" ? current_day_low - (ATRfraction * atr) : current_day_high + (ATRfraction * atr)
+
+//---------------------------------------------------------
+// Actual Entry
+//
+// Since this is an INTRADAY indicator, the active entry
+// candidate is the current bar price.
+//---------------------------------------------------------
+entryPrice = close
+
+//---------------------------------------------------------
+// Entry-to-Stop Distance
+//---------------------------------------------------------
+tickerRisk = reference_point == "Low" ? entryPrice - stopLoss : stopLoss - entryPrice
+
+//---------------------------------------------------------
+// Current Distance from LoD / HoD in ATR Terms
+//---------------------------------------------------------
+LoDdist = atr > 0 ? 100.0 * (close - current_day_low) / atr : na
+referenceDist = atr > 0 ? 100.0 * math.abs(entryPrice - reference_price) / atr : na
+stopDistanceATR = atr > 0 and tickerRisk > 0 ? tickerRisk / atr : na
+
+//---------------------------------------------------------
+// Eligibility
+//
+// Rule 1:
+// Long  -> current price must remain at/below threshold.
+// Short -> current price must remain at/above threshold.
+//
+// Rule 2:
+// Current entry-to-stop distance must remain below
+// one full ATR.
+//---------------------------------------------------------
+thresholdOK = reference_point == "Low" ? entryPrice <= threshold_price : entryPrice >= threshold_price
+fullATRDistanceOK = tickerRisk > 0 and tickerRisk < atr
+entryEligible = thresholdOK and fullATRDistanceOK
+
+dontBuy = not entryEligible
+
+//---------------------------------------------------------
+// Account Risk Position Sizing
+//
+// Risk dollars = account equity * selected risk tolerance.
+//
+// Shares are calculated from CURRENT price to CURRENT
+// structural stop, not from threshold_price.
+//
+// Floor is used because "Max. no. Shares" should not
+// exceed the selected account-risk budget.
+//---------------------------------------------------------
 riskPerTrade = capital * (riskTolerance / 100.0)
-tickerRisk = plannedEntry - stopLoss
-shares = tickerRisk > 0 ? riskPerTrade / tickerRisk : na
+rawShares = tickerRisk > 0 ? riskPerTrade / tickerRisk : na
+shares = entryEligible and not na(rawShares) ? math.floor(rawShares) : na
 
-optiBuy = (minBuy <= maxBuy) ? minBuy : na
-dontBuy = na(optiBuy)
+//---------------------------------------------------------
+// Position Statistics
+//---------------------------------------------------------
+positionValue = not na(shares) ? shares * entryPrice : na
+positionPct = not na(positionValue) and capital > 0 ? 100.0 * positionValue / capital : na
 
-current_risk = math.abs(todayClose - stopLoss) * 100 / todayClose
+actualDollarRisk = not na(shares) ? shares * tickerRisk : na
+actualEquityRiskPct = not na(actualDollarRisk) and capital > 0 ? 100.0 * actualDollarRisk / capital : na
 
-// ==========🔹 Hybrid Vandenbord / Tharp RPRP Position Sizing 🔹==========
+//---------------------------------------------------------
+// Stop-Distance Percentage
+//
+// This is NOT account-equity risk.
+// It is simply entry-to-stop distance as % of stock price.
+//---------------------------------------------------------
+current_risk = tickerRisk > 0 ? tickerRisk * 100.0 / entryPrice : na
 
+//---------------------------------------------------------
+// ==========🔹 Hybrid Vandenbord / VanTharp RPRP Position Sizing 🔹==========
+//
+// Existing RPRP framework retained.
+//---------------------------------------------------------
 rprpStockSleevePct = input.float(100.0, title="RPRP Stock Sleeve % of Total Capital", minval=1.0, maxval=100.0, step=1.0, group="RPRP")
 rprpBaseAllocationPct = input.float(15.0, title="RPRP Base Position % of Stock Sleeve", minval=0.1, maxval=100.0, step=0.5, group="RPRP")
 rprpBenchmark = input.symbol("AMEX:SPY", title="RPRP Beta Benchmark", group="RPRP")
@@ -80,6 +220,7 @@ if rprpNewDay and not na(rprpStockReturn) and not na(rprpBenchmarkReturn)
         array.shift(rprpBenchmarkReturns)
 
     rprpN = array.size(rprpStockReturns)
+
     if rprpN >= 20
         float rprpSumStock = 0.0
         float rprpSumBenchmark = 0.0
@@ -105,77 +246,73 @@ rprpWeightTotal = rprpBetaWeight + rprpAtrWeight
 rprpRVF = not na(rprpBeta) and not na(rprpAtrPct) and rprpWeightTotal > 0.0 ? (rprpBetaWeight * rprpBeta + rprpAtrWeight * rprpAtrPct) / rprpWeightTotal : na
 
 // Keep the existing indicator's current daily close as the position-price reference.
-// This adds RPRP sizing without changing the indicator's existing entry/ATR logic.
 rprpPrice = todayClose
 
-// Vandenbord cap: apply the stock-sleeve allocation first, then divide the
-// base position percentage by RVF, and convert the resulting dollars to shares.
+// Vandenbord cap.
 rprpDonPositionPct = not na(rprpRVF) and rprpRVF > 0.0 ? rprpBaseAllocationPct / rprpRVF : na
 rprpStockSleeveCapital = capital * (rprpStockSleevePct / 100.0)
 rprpDonDollarCap = not na(rprpDonPositionPct) ? rprpStockSleeveCapital * (rprpDonPositionPct / 100.0) : na
 rprpDonShares = not na(rprpDonDollarCap) and rprpPrice > 0.0 ? rprpDonDollarCap / rprpPrice : na
 
-// Tharp stop-risk cap: account risk budget divided by dollars at risk per share.
+// VanTharp stop-risk cap.
 rprpStopRiskPerShare = math.abs(rprpPrice - stopLoss)
 rprpTharpShares = rprpStopRiskPerShare > 0.0 ? riskPerTrade / rprpStopRiskPerShare : na
 
-// Hybrid rule: the position must satisfy BOTH constraints.
-rprpShares = not na(rprpDonShares) and not na(rprpTharpShares) ? ((0.35*math.max(rprpDonShares, rprpTharpShares))+(0.65*math.min(rprpDonShares, rprpTharpShares)))/2 : na
+// Hybrid rule retained unchanged.
+rprpShares = not na(rprpDonShares) and not na(rprpTharpShares) ? ((0.35 * math.max(rprpDonShares, rprpTharpShares)) + (0.65 * math.min(rprpDonShares, rprpTharpShares))) / 2 : na
 rprpSharesText = na(rprpShares) ? "N/A" : str.tostring(rprpShares, "#.###")
 
-show_label = input.bool(true, title="Show Label")
-line_color_input = input.color(color.rgb(9, 115, 201), title="Line Color")
-line_width = input.int(2, title="Line Width", minval=1, maxval=5)
-line_length = input.int(10, title="Line Length (bars)", minval=1, maxval=50)
-reference_point = input.string("Low", title="Reference Point", options=["Low", "High"])
-line_style_input = input.string("Solid", title="Line Style", options=["Solid", "Dashed", "Dotted"])
-
-line_style = switch line_style_input
-    "Solid"  => line.style_solid
-    "Dashed" => line.style_dashed
-    "Dotted" => line.style_dotted
-    => line.style_solid
-
-// Dynamic color: RED when it signals "Don't buy", Orange when Risk > 4%
+//---------------------------------------------------------
+// Dynamic Line Color
+//
+// RED    = Entry is no longer eligible.
+// ORANGE = eligible, but stop distance exceeds 4% of price.
+// BLUE   = normal eligible condition.
+//---------------------------------------------------------
 line_color = dontBuy ? #ff0000 : current_risk > 4 ? color.rgb(168, 107, 0) : line_color_input
 
-// Track current day's high and low using session-based logic
-isnewday = ta.change(time("1D"))
-var float current_day_high = na
-var float current_day_low = na
+//---------------------------------------------------------
+// Text Formatting
+//---------------------------------------------------------
+suggestedPriceText = na(optiBuy) ? "N/A" : str.tostring(optiBuy, format.mintick)
+sharesText = dontBuy or na(shares) ? "Don't buy" : str.tostring(shares, "#")
+positionPctText = na(positionPct) ? "N/A" : str.tostring(positionPct, "#.##")
+equityRiskText = na(actualEquityRiskPct) ? "N/A" : str.tostring(actualEquityRiskPct, "#.###")
+stopDistancePctText = na(current_risk) ? "N/A" : str.tostring(current_risk, "#.##")
+stopDistanceATRText = na(stopDistanceATR) ? "N/A" : str.tostring(stopDistanceATR, "#.##")
+statusText = entryEligible ? "ENTRY ELIGIBLE" : "DON'T BUY"
 
-if isnewday or na(current_day_high) or na(current_day_low)
-    current_day_high := high
-    current_day_low := low
-else
-    current_day_high := math.max(current_day_high, high)
-    current_day_low := math.min(current_day_low, low)
-
-// Determine reference price based on user selection
-reference_price = reference_point == "Low" ? current_day_low : current_day_high
-
-// Calculate target price (distance uses your original daily-based todayLow logic)
-atr_distance = (atr_percentage * atr / 100)
-target_price = reference_point == "Low" ? reference_price + atr_distance : reference_price - atr_distance
-
-// Track line and label
+//---------------------------------------------------------
+// Track Line and Label
+//---------------------------------------------------------
 var line current_line = na
+var line suggested_line = na
 var label current_label = na
+var label suggested_label = na
 
 if barstate.islast or barstate.isconfirmed
     if not na(current_line)
         line.delete(current_line)
+        line.delete(suggested_line)
+
     if not na(current_label)
         label.delete(current_label)
+        label.delete(suggested_label)
 
     if timeframe.isminutes
         start_bar = bar_index
         end_bar = bar_index + line_length
-        current_line := line.new(x1=start_bar, y1=target_price, x2=end_bar, y2=target_price, color=line_color, width=line_width, style=line_style, extend=extend.none)
+
+        current_line := line.new(x1=start_bar, y1=threshold_price, x2=end_bar, y2=threshold_price, color=line_color, width=line_width, style=line_style, extend=extend.none)
+        suggested_line := line.new(x1=start_bar, y1=optiBuy, x2=end_bar, y2=optiBuy, color=color.rgb(140, 210, 240), width=line_width, style=line_style, extend=extend.none)
 
         if show_label
-            label_text = str.format("Price {0}% ATR from \n {1} of Day is ${2} \n Optimal Price: ${3} \n Max. no. Shares: #{4} \n RPRP Shares: #" + rprpSharesText + "\n Stop Loss: ${5} & Risk: %{6} \n LoD: {7}% & RVol: {8}%", atr_percentage, reference_point, str.tostring(target_price, format.mintick), na(optiBuy) ? "Don't buy" : str.tostring(optiBuy, format.mintick), shares, str.tostring(stopLoss, format.mintick), str.tostring(current_risk, format.mintick), str.tostring(LoDdist, format.mintick), relVol)
-            current_label := label.new(x=end_bar + 1, y=target_price, text=label_text, color=line_color, textcolor=color.white, style=label.style_label_left, size=size.small)
+            label_text = str.format("Price {0}% ATR from \n {1} of Day is ${2} \n Max. no. Shares: #{3} \n Position Size: {4}% \n RPRP Shares: #{5} \n Stop Loss: ${6} & Stop Dist.: {7}% \n LoD: {8}% & RVol: {9}%", atr_percentage, reference_point, str.tostring(threshold_price, format.mintick), sharesText, positionPctText, rprpSharesText, str.tostring(stopLoss, format.mintick), stopDistancePctText, str.tostring(LoDdist, format.mintick), relVol)
+            current_label := label.new(x=end_bar + 1, y=threshold_price, text=label_text, color=line_color, textcolor=color.white, style=label.style_label_left, size=size.small)
+            another_label_text = str.format(" 'Suggested' Price: ${0}", suggestedPriceText)
+            suggested_label := label.new(x=end_bar + 1, y=optiBuy, text=another_label_text, color=color.rgb(140, 210, 240), textcolor=color.black, style=label.style_label_left, size=size.small)
 
-// Plot the target price as a reference
-plot(timeframe.isminutes ? target_price : na, title="LoD limit line", color=color.new(line_color, 80), linewidth=1, display=display.all - display.status_line - display.price_scale)
+//---------------------------------------------------------
+// Plot Threshold Reference
+//---------------------------------------------------------
+plot(timeframe.isminutes ? threshold_price : na, title="LoD limit line", color=color.new(line_color, 80), linewidth=1, display=display.all - display.status_line - display.price_scale)
