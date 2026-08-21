@@ -1,0 +1,164 @@
+// Inspired by https://x.com/LindaRaschke/status/2090413153892946182
+// Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
+//@version=6
+indicator("Raschke-style NYSE TICK Intermediate Cycle", shorttitle="NYSE TICK Cycle", overlay=false, max_labels_count=500)
+
+//---------------------------------------------------------
+// Groups
+//---------------------------------------------------------
+G_DATA = "1. NYSE TICK DATA"
+G_MA = "2. MOVING AVERAGES"
+G_ZONE = "3. CYCLE ZONES"
+G_VIS = "4. DISPLAY"
+
+//---------------------------------------------------------
+// NYSE TICK source
+//---------------------------------------------------------
+// Current TradingView NYSE TICK statistical-index symbol.
+tickSymbol = input.symbol("USI:TICK.NY", "NYSE TICK symbol", group=G_DATA)
+
+// Raschke-style intermediate-cycle construction is based
+// on DAILY high/low TICK statistics.
+tickTF = input.timeframe("D", "Calculation timeframe", group=G_DATA)
+
+//---------------------------------------------------------
+// Moving-average settings
+//---------------------------------------------------------
+maType = input.string("EMA", "High/Low average type", options=["EMA", "SMA"], group=G_MA)
+maLength = input.int(5, "High/Low average length", minval=1, maxval=50, group=G_MA)
+
+//---------------------------------------------------------
+// Cycle-zone settings
+//---------------------------------------------------------
+signalMode = input.string("Local extrema", "Signal method", options=["Local extrema", "Percentile"], group=G_ZONE)
+extremaLength = input.int(63, "Local extrema window", minval=2, maxval=126, group=G_ZONE)
+percentileLength = input.int(126, "Percentile lookback", minval=20, maxval=500, group=G_ZONE)
+greenPct = input.float(85.0, "Green spread percentile", minval=50.0, maxval=99.0, step=1.0, group=G_ZONE)
+redPct = input.float(15.0, "Red spread percentile", minval=1.0, maxval=50.0, step=1.0, group=G_ZONE)
+
+//---------------------------------------------------------
+// Display settings
+//---------------------------------------------------------
+showMiddle = input.bool(true, "Show daily TICK close", group=G_VIS)
+showSpread = input.bool(false, "Show spread", group=G_VIS)
+showTable = input.bool(false, "Show status table", group=G_VIS)
+showReferenceLevels = input.bool(false, "Show ±1000 levels", group=G_VIS)
+show800Levels = input.bool(false, "Show ±800 levels", group=G_VIS)
+
+//---------------------------------------------------------
+// Moving-average function
+//---------------------------------------------------------
+f_ma(src, len) =>
+    maType == "EMA" ? ta.ema(src, len) : ta.sma(src, len)
+
+//---------------------------------------------------------
+// IMPORTANT:
+// Calculations occur inside the requested TICK.NY daily
+// context rather than after importing data.
+//---------------------------------------------------------
+[tickHighMA, tickLowMA, tickClose, tickSpread, spreadRank] = request.security(tickSymbol, tickTF, [f_ma(high, maLength), f_ma(low, maLength), close, f_ma(high, maLength) - f_ma(low, maLength), ta.percentrank(f_ma(high, maLength) - f_ma(low, maLength), percentileLength)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+//---------------------------------------------------------
+// Sanity check
+//---------------------------------------------------------
+// Genuine NYSE TICK should normally live in approximately
+// the ±2000 universe, not around 10,000.
+validTick = not na(tickHighMA) and not na(tickLowMA) and math.abs(tickHighMA) < 3000 and math.abs(tickLowMA) < 3000
+
+//---------------------------------------------------------
+// Spread
+//---------------------------------------------------------
+spread = tickHighMA - tickLowMA
+
+//---------------------------------------------------------
+// Local-extrema reconstruction
+//
+// Public Thinkorswim reconstruction:
+// largest MA separation  -> green
+// smallest MA separation -> red
+//---------------------------------------------------------
+localMax = spread >= ta.highest(spread, extremaLength)
+localMin = spread <= ta.lowest(spread, extremaLength)
+
+greenExtrema = validTick and localMax
+redExtrema = validTick and localMin
+
+//---------------------------------------------------------
+// Percentile alternative
+//---------------------------------------------------------
+greenPercentile = validTick and spreadRank >= greenPct
+redPercentile = validTick and spreadRank <= redPct
+
+//---------------------------------------------------------
+// Active regime
+//---------------------------------------------------------
+greenZone = signalMode == "Local extrema" ? greenExtrema : greenPercentile
+redZone = signalMode == "Local extrema" ? redExtrema : redPercentile
+
+//---------------------------------------------------------
+// Main lines
+//---------------------------------------------------------
+upperPlot = plot(validTick ? tickHighMA : na, "TICK High MA", color=color.rgb(75, 115, 255), linewidth=2)
+lowerPlot = plot(validTick ? tickLowMA : na, "TICK Low MA", color=color.red, linewidth=2)
+plot(showMiddle and validTick ? tickClose : na, "Daily TICK Close", color=color.gray, linewidth=1)
+plot(showSpread and validTick ? spread : na, "High-Low Spread", color=color.orange, linewidth=1)
+
+//---------------------------------------------------------
+// Raschke-style zones
+//---------------------------------------------------------
+fillColor = greenZone ? color.new(color.lime, 77) : redZone ? color.new(color.red, 77) : na
+fill(upperPlot, lowerPlot, color=fillColor, title="Cycle Zone")
+
+//---------------------------------------------------------
+// Reference levels
+//---------------------------------------------------------
+plot(showReferenceLevels ? 1000 : na, "+1000", color=color.new(color.gray, 50), linewidth=1)
+plot(showReferenceLevels ? -1000 : na, "-1000", color=color.new(color.gray, 50), linewidth=1)
+plot(show800Levels ? 800 : na, "+800", color=color.new(color.gray, 75), linewidth=1)
+plot(show800Levels ? -800 : na, "-800", color=color.new(color.gray, 75), linewidth=1)
+hline(0, "Zero", color=color.new(color.gray, 65))
+
+//---------------------------------------------------------
+// Zone markers
+//---------------------------------------------------------
+greenStart = greenZone and not greenZone[1]
+redStart = redZone and not redZone[1]
+
+//plotshape(greenStart ? tickLowMA : na, title="Green Buying Zone", style=shape.triangleup, location=location.absolute, color=color.lime, size=size.tiny, text="G")
+//plotshape(redStart ? tickHighMA : na, title="Red Selling Zone", style=shape.triangledown, location=location.absolute, color=color.red, size=size.tiny, text="R")
+
+//---------------------------------------------------------
+// State
+//---------------------------------------------------------
+stateText = not validTick ? "INVALID TICK DATA" : greenZone ? "BUYING OPPORTUNITY" : redZone ? "SELLING ZONE" : "NEUTRAL"
+stateColor = not validTick ? color.orange : greenZone ? color.green : redZone ? color.red : color.gray
+
+//---------------------------------------------------------
+// Diagnostics table
+//---------------------------------------------------------
+var table status = table.new(position.top_right, 2, 7, border_width=1)
+
+if barstate.islast and showTable
+    table.cell(status, 0, 0, "TICK CYCLE", text_color=color.white, bgcolor=color.new(color.blue, 55))
+    table.cell(status, 1, 0, stateText, text_color=color.white, bgcolor=stateColor)
+    table.cell(status, 0, 1, "Source", text_color=color.white)
+    table.cell(status, 1, 1, tickSymbol, text_color=color.white)
+    table.cell(status, 0, 2, "High MA", text_color=color.white)
+    table.cell(status, 1, 2, validTick ? str.tostring(tickHighMA, "#") : "INVALID", text_color=validTick ? color.white : color.orange)
+    table.cell(status, 0, 3, "Low MA", text_color=color.white)
+    table.cell(status, 1, 3, validTick ? str.tostring(tickLowMA, "#") : "INVALID", text_color=validTick ? color.white : color.orange)
+    table.cell(status, 0, 4, "Spread", text_color=color.white)
+    table.cell(status, 1, 4, validTick ? str.tostring(spread, "#") : "INVALID", text_color=validTick ? color.white : color.orange)
+    table.cell(status, 0, 5, "Spread Rank", text_color=color.white)
+    table.cell(status, 1, 5, validTick ? str.tostring(spreadRank, "#.0") + "%" : "INVALID", text_color=validTick ? color.white : color.orange)
+    table.cell(status, 0, 6, "Data Check", text_color=color.white)
+    table.cell(status, 1, 6, validTick ? "PASS" : "FAIL", text_color=color.white, bgcolor=validTick ? color.new(color.green, 35) : color.new(color.red, 20))
+
+if barstate.islast and not showTable
+    table.clear(status, 0, 0, 1, 6)
+
+//---------------------------------------------------------
+// Alerts
+//---------------------------------------------------------
+alertcondition(greenStart, "TICK Green Zone", "NYSE TICK spread entered a green buying-opportunity condition.")
+alertcondition(redStart, "TICK Red Zone", "NYSE TICK spread entered a red selling-zone condition.")
