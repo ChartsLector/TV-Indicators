@@ -1,0 +1,145 @@
+// CFTC Codes: https://www.cftc.gov/strike-price
+// Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
+//@version=6
+import TradingView/LibraryCOT/6 as cot
+
+indicator("COT Net Positions", shorttitle="COT", overlay=false, precision=1, dynamic_requests=true)
+
+//---------------------------------------------------------
+// Inputs
+//---------------------------------------------------------
+G_DATA = "COT Data"
+G_DISPLAY = "Display"
+
+cotMarket = input.string("NASDAQ-100 Consolidated", "COT Market", options=["NASDAQ-100 Consolidated", "S&P 500 Consolidated", "Russell 2000 Consolidated", "S&P 500 E-mini", "NASDAQ-100 E-mini", "Russell-2000 E-mini", "CME Bitcoin futures", "COMEX Gold"], group=G_DATA, tooltip = "Check the link in the preamble to modify and/or add more CFTC codes")
+reportMode = input.string("Legacy", "COT Report", options=["Legacy", "Financial / TFF"], group=G_DATA)
+includeOptions = input.bool(false, "Include Options", group=G_DATA)
+
+positionMode = input.string("Raw Contracts", "Position Units", options=["Raw Contracts", "% of Open Interest"], group=G_DISPLAY)
+showOtherReportables = input.bool(false, "Show Other Reportables in TFF", group=G_DISPLAY)
+
+//---------------------------------------------------------
+// Settings
+//---------------------------------------------------------
+isTFF = reportMode == "Financial / TFF"
+usePct = positionMode == "% of Open Interest"
+cftcCode = switch cotMarket
+    "NASDAQ-100 E-mini"         => "209742"
+    "S&P 500 E-mini"            => "13874A"
+    "Russell-2000 E-mini"       => "239742"
+    "S&P 500 Consolidated"      => "13874+"
+    "NASDAQ-100 Consolidated"   => "20974+"
+    "Russell 2000 Consolidated" => "23974+"
+    "CME Bitcoin futures"       => "133741"
+    "COMEX Gold"                => "088691"
+reportType = isTFF ? "Financial" : "Legacy"
+
+//---------------------------------------------------------
+// Colors - tuned to resemble your 2nd image
+//---------------------------------------------------------
+colBlue   = #26c6da
+colRed    = #ec407a
+colYellow = #ffa826a2
+colOrange = #e6a53c
+zeroCol   = #787b86a6
+
+//---------------------------------------------------------
+// Helper functions
+//---------------------------------------------------------
+f_ticker(string metric, string direction) =>
+    cot.COTTickerid(reportType, cftcCode, includeOptions, metric, direction, "All")
+
+f_weekly(string metric, string direction) =>
+    request.security(f_ticker(metric, direction), "1W", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+f_pct(float net, float oi) =>
+    not na(oi) and oi != 0 ? 100.0 * net / oi : na
+
+//---------------------------------------------------------
+// Open Interest
+//---------------------------------------------------------
+openInterest = f_weekly("Open Interest", "No direction")
+
+//---------------------------------------------------------
+// Legacy
+//---------------------------------------------------------
+legacyLargeLong  = not isTFF ? f_weekly("Noncommercial Positions", "Long") : na
+legacyLargeShort = not isTFF ? f_weekly("Noncommercial Positions", "Short") : na
+legacyCommLong   = not isTFF ? f_weekly("Commercial Positions", "Long") : na
+legacyCommShort  = not isTFF ? f_weekly("Commercial Positions", "Short") : na
+legacySmallLong  = not isTFF ? f_weekly("Nonreportable Positions", "Long") : na
+legacySmallShort = not isTFF ? f_weekly("Nonreportable Positions", "Short") : na
+
+legacyLargeNet = legacyLargeLong - legacyLargeShort
+legacyCommNet  = legacyCommLong - legacyCommShort
+legacySmallNet = legacySmallLong - legacySmallShort
+
+//---------------------------------------------------------
+// Financial / TFF
+//---------------------------------------------------------
+tffLevLong    = isTFF ? f_weekly("Leveraged Funds Positions", "Long") : na
+tffLevShort   = isTFF ? f_weekly("Leveraged Funds Positions", "Short") : na
+tffDealerLong = isTFF ? f_weekly("Dealer Positions", "Long") : na
+tffDealerShort= isTFF ? f_weekly("Dealer Positions", "Short") : na
+tffAssetLong  = isTFF ? f_weekly("Asset Manager Positions", "Long") : na
+tffAssetShort = isTFF ? f_weekly("Asset Manager Positions", "Short") : na
+tffOtherLong  = isTFF ? f_weekly("Other Reportable Positions", "Long") : na
+tffOtherShort = isTFF ? f_weekly("Other Reportable Positions", "Short") : na
+
+tffLevNet    = tffLevLong - tffLevShort
+tffDealerNet = tffDealerLong - tffDealerShort
+tffAssetNet  = tffAssetLong - tffAssetShort
+tffOtherNet  = tffOtherLong - tffOtherShort
+
+//---------------------------------------------------------
+// Display series
+//---------------------------------------------------------
+largeRaw = isTFF ? tffLevNet    : legacyLargeNet
+commRaw  = isTFF ? tffDealerNet : legacyCommNet
+smallRaw = isTFF ? tffAssetNet  : legacySmallNet
+otherRaw = isTFF ? tffOtherNet  : na
+
+largePct = f_pct(largeRaw, openInterest)
+commPct  = f_pct(commRaw, openInterest)
+smallPct = f_pct(smallRaw, openInterest)
+otherPct = f_pct(otherRaw, openInterest)
+
+largeSeries = usePct ? largePct : largeRaw
+commSeries  = usePct ? commPct  : commRaw
+smallSeries = usePct ? smallPct : smallRaw
+otherSeries = usePct ? otherPct : otherRaw
+
+//---------------------------------------------------------
+// Plot
+//---------------------------------------------------------
+hline(0, "Zero", color=zeroCol)
+
+// Legacy plots
+plot(not isTFF ? largeSeries : na, "Large Speculators Net", style=plot.style_histogram, color=colBlue)
+plot(not isTFF ? commSeries  : na, "Commercials Net",      style=plot.style_histogram, color=colRed)
+plot(not isTFF ? smallSeries : na, "Small Speculators Net",style=plot.style_histogram, color=colYellow)
+
+// TFF plots
+plot(isTFF ? largeSeries : na, "Leveraged Funds Net", style=plot.style_histogram, color=colBlue)
+plot(isTFF ? commSeries  : na, "Dealers Net",         style=plot.style_histogram, color=colRed)
+plot(isTFF ? smallSeries : na, "Asset Managers Net",  style=plot.style_histogram, color=colYellow)
+plot(isTFF and showOtherReportables ? otherSeries : na, "Other Reportables Net", style=plot.style_histogram, color=colOrange)
+
+//---------------------------------------------------------
+// Data Window only
+//---------------------------------------------------------
+plot(openInterest, "Open Interest", display=display.data_window)
+
+plot(legacyLargeNet, "Legacy Large Specs Raw", display=display.data_window)
+plot(legacyCommNet,  "Legacy Commercials Raw", display=display.data_window)
+plot(legacySmallNet, "Legacy Small Specs Raw", display=display.data_window)
+
+plot(tffLevNet,    "TFF Leveraged Funds Raw", display=display.data_window)
+plot(tffDealerNet, "TFF Dealers Raw",         display=display.data_window)
+plot(tffAssetNet,  "TFF Asset Managers Raw",  display=display.data_window)
+plot(tffOtherNet,  "TFF Other Reportables Raw", display=display.data_window)
+
+plot(largePct, "Displayed Group 1 % OI", display=display.data_window)
+plot(commPct,  "Displayed Group 2 % OI", display=display.data_window)
+plot(smallPct, "Displayed Group 3 % OI", display=display.data_window)
+plot(otherPct, "Displayed Group 4 % OI", display=display.data_window)
