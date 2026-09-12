@@ -18,30 +18,25 @@
 //
 // Disclaimer: This indicator is for educational purposes only and is not financial advice.
 // Trading involves risk; use it at your own discretion and responsibility.
-
-//@version=5
+//@version=6
 indicator("LoD Intraday Entry", overlay=true)
 
-//---------------------------------------------------------
-// Relative Volume
-//---------------------------------------------------------
 symtick = syminfo.tickerid
 len = input(50, "Volume MA Length", group="$Vol.")
 vol = request.security(symtick, "D", volume)
-ma = request.security(symtick, "D", ta.sma(vol, len))
+ma  = request.security(symtick, "D", ta.sma(vol, len))
 relVol = (100 * vol) / ma
-
-//---------------------------------------------------------
-// ATR / Risk Inputs
-//---------------------------------------------------------
 capital = input.float(title="Total Capital $", defval=100000, minval=1, group="ATR")
-riskTolerance = input.float(title="Risk Tolerance %", defval=0.15, minval=0.01, maxval=10, step=0.01, group="ATR")
+riskTolerance = input.float(title="Risk Tolerance %", defval=0.25, minval=0.01, maxval=10, step=0.01, group="ATR")
 ATRfraction = input.float(title="Percentage of ATR below the LoD", defval=0.1, minval=0.01, maxval=1, step=0.01, group="ATR")
-atr_percentage = input.float(60.0, title="ATR Percentage %", minval=0.1, maxval=200.0, step=0.1, group="ATR")
+atr_percentage = input.float(65.0, title="ATR Percentage %", minval=0.1, maxval=200.0, step=0.1, group="ATR")
 showInfo = input.bool(true, title="Show Info.", group="ATR")
 atrLength = input.int(14, title="ATR Length", group="ATR")
 smaLength = input.int(50, title="50 SMA Length", group="ATR")
 emaLength = input.int(20, title="20 EMA Length", group="ATR")
+cloudATRpct = input.float(5.0, "Suggested Price Cloud Width (% ATR)", minval=1.0, maxval=20.0, step=0.5, group="ATR")
+show_label = input.bool(true, title="Show LoD Info", group="ATR")
+show_cloud = input.bool(true, title="Show Suggested Price Cloud", group="ATR")
 
 //---------------------------------------------------------
 // Daily Reference Data
@@ -54,6 +49,7 @@ todayClose = request.security(syminfo.tickerid, "D", close)
 atrClosePercent = (atr / todayClose) * 100
 percentGain = ((close - sma50) / sma50) * 100
 percentGains = ((close - ema20) / ema20) * 100
+cloudWidth = atr * cloudATRpct / 100.0
 
 //---------------------------------------------------------
 // Track Current Intraday High / Low
@@ -72,7 +68,6 @@ else
 //---------------------------------------------------------
 // Display / Reference Inputs
 //---------------------------------------------------------
-show_label = input.bool(true, title="Show Label")
 line_color_input = input.color(color.rgb(9, 115, 201), title="Line Color")
 line_width = input.int(2, title="Line Width", minval=1, maxval=5)
 line_length = input.int(10, title="Line Length (bars)", minval=1, maxval=50)
@@ -94,6 +89,10 @@ reference_price = reference_point == "Low" ? current_day_low : current_day_high
 // ATR Threshold
 //---------------------------------------------------------
 atr_distance = (atr_percentage * atr / 100.0)
+suggested_offset = atr_distance * ATRfraction / 100.0
+idealBuy = reference_point == "Low" ?
+     current_day_low + suggested_offset :
+     current_day_high - suggested_offset
 
 threshold_price = reference_point == "Low" ? reference_price + atr_distance : reference_price - atr_distance
 
@@ -104,8 +103,11 @@ threshold_price = reference_point == "Low" ? reference_price + atr_distance : re
 //---------------------------------------------------------
 maxBuy = current_day_low + atr_distance
 minBuy = current_day_high - atr_distance
-optiBuy = minBuy <= maxBuy ? (reference_point == "Low" ? minBuy : maxBuy) : na
 
+//optiBuy = minBuy <= maxBuy ? (reference_point == "Low" ? minBuy : maxBuy) : na
+optiBuy = reference_point == "Low" ?
+     math.avg(close, idealBuy) :
+     math.max(close, idealBuy)
 //---------------------------------------------------------
 // Structural Stop
 //
@@ -152,7 +154,11 @@ thresholdOK = reference_point == "Low" ? entryPrice <= threshold_price : entryPr
 fullATRDistanceOK = tickerRisk > 0 and tickerRisk < atr
 entryEligible = thresholdOK and fullATRDistanceOK
 
-dontBuy = not entryEligible
+suggestionValid = reference_point == "Low" ?
+     optiBuy > stopLoss :
+     optiBuy < stopLoss
+
+dontBuy = not entryEligible or not suggestionValid
 
 //---------------------------------------------------------
 // Account Risk Position Sizing
@@ -285,34 +291,155 @@ statusText = entryEligible ? "ENTRY ELIGIBLE" : "DON'T BUY"
 //---------------------------------------------------------
 // Track Line and Label
 //---------------------------------------------------------
-var line current_line = na
+var line current_line   = na
 var line suggested_line = na
-var label current_label = na
+var line stoploss_line  = na
+
+var label current_label   = na
 var label suggested_label = na
+var label stoploss_label  = na
 
 if barstate.islast or barstate.isconfirmed
+
+    // Delete previous lines independently
     if not na(current_line)
         line.delete(current_line)
-        line.delete(suggested_line)
+        current_line := na
 
+    if not na(suggested_line)
+        line.delete(suggested_line)
+        suggested_line := na
+
+    if not na(stoploss_line)
+        line.delete(stoploss_line)
+        stoploss_line := na
+
+    // Delete previous labels independently
     if not na(current_label)
         label.delete(current_label)
+        current_label := na
+
+    if not na(suggested_label)
         label.delete(suggested_label)
+        suggested_label := na
+
+    if not na(stoploss_label)
+        label.delete(stoploss_label)
+        stoploss_label := na
 
     if timeframe.isminutes
         start_bar = bar_index
-        end_bar = bar_index + line_length
+        end_bar   = bar_index + line_length
 
-        current_line := line.new(x1=start_bar, y1=threshold_price, x2=end_bar, y2=threshold_price, color=line_color, width=line_width, style=line_style, extend=extend.none)
-        suggested_line := line.new(x1=start_bar, y1=optiBuy, x2=end_bar, y2=optiBuy, color=color.rgb(140, 210, 240), width=line_width, style=line_style, extend=extend.none)
+        // Current-price threshold line
+        current_line := line.new(
+             x1=start_bar,
+             y1=threshold_price,
+             x2=end_bar,
+             y2=threshold_price,
+             color=line_color,
+             width=line_width,
+             style=line_style,
+             extend=extend.none)
+
+        // Suggested-price line
+        suggested_line := line.new(
+             x1=start_bar,
+             y1=optiBuy,
+             x2=end_bar,
+             y2=optiBuy,
+             color=color.rgb(140, 210, 240),
+             width=line_width,
+             style=line_style,
+             extend=extend.none)
+
+        // Stop-loss line
+        stoploss_line := line.new(
+             x1=start_bar,
+             y1=stopLoss,
+             x2=end_bar,
+             y2=stopLoss,
+             color=color.rgb(234, 0, 0),
+             width=line_width,
+             style=line_style,
+             extend=extend.none)
 
         if show_label
-            label_text = str.format("Price {0}% ATR from \n {1} of Day is ${2} \n Max. no. Shares: #{3} \n Position Size: {4}% \n RPRP Shares: #{5} \n Stop Loss: ${6} & Stop Dist.: {7}% \n LoD: {8}% & RVol: {9}%", atr_percentage, reference_point, str.tostring(threshold_price, format.mintick), sharesText, positionPctText, rprpSharesText, str.tostring(stopLoss, format.mintick), stopDistancePctText, str.tostring(LoDdist, format.mintick), relVol)
-            current_label := label.new(x=end_bar + 1, y=threshold_price, text=label_text, color=line_color, textcolor=color.white, style=label.style_label_left, size=size.small)
-            another_label_text = str.format(" 'Suggested' Price: ${0}", suggestedPriceText)
-            suggested_label := label.new(x=end_bar + 1, y=optiBuy, text=another_label_text, color=color.rgb(140, 210, 240), textcolor=color.black, style=label.style_label_left, size=size.small)
+            label_text = str.format(
+                 "Price {0}% ATR from \n {1} of Day is ${2} \n Max. no. Shares: #{3} \n Position Size: {4}% \n RPRP Shares: #{5} \n Stop Loss: ${6} & Stop Dist.: {7}% \n LoD: {8}% & RVol: {9}%",
+                 atr_percentage,
+                 reference_point,
+                 str.tostring(threshold_price, format.mintick),
+                 sharesText,
+                 positionPctText,
+                 rprpSharesText,
+                 str.tostring(stopLoss, format.mintick),
+                 stopDistancePctText,
+                 str.tostring(LoDdist, format.mintick),
+                 relVol)
+
+            current_label := label.new(
+                 x=end_bar + 1,
+                 y=threshold_price,
+                 text=label_text,
+                 color=line_color,
+                 textcolor=color.white,
+                 style=label.style_label_left,
+                 size=size.small)
+
+            suggested_label_text = str.format(
+                 "Suggested Price: ${0}",
+                 suggestedPriceText)
+
+            suggested_label := label.new(
+                 x=end_bar + 1,
+                 y=optiBuy,
+                 text=suggested_label_text,
+                 color=color.rgb(140, 210, 240),
+                 textcolor=color.black,
+                 style=label.style_label_left,
+                 size=size.small)
+
+            stoploss_label_text = str.format(
+                 "Stop Loss: ${0}",
+                 str.tostring(stopLoss, format.mintick))
+
+            stoploss_label := label.new(
+                 x=end_bar + 1,
+                 y=stopLoss,
+                 text=stoploss_label_text,
+                 color=color.rgb(234, 0, 0),
+                 textcolor=color.white,
+                 style=label.style_label_left,
+                 size=size.small)
 
 //---------------------------------------------------------
-// Plot Threshold Reference
+// Plot Suggested Price
 //---------------------------------------------------------
-plot(timeframe.isminutes ? threshold_price : na, title="LoD limit line", color=color.new(line_color, 80), linewidth=1, display=display.all - display.status_line - display.price_scale)
+cloudLower = reference_point == "Low" ?
+     math.max(optiBuy - cloudWidth, current_day_low) :
+     math.max(optiBuy - cloudWidth, threshold_price)
+
+cloudUpper = reference_point == "Low" ?
+     math.min(optiBuy + cloudWidth, threshold_price) :
+     math.min(optiBuy + cloudWidth, current_day_high)
+
+plot(timeframe.isminutes ? optiBuy : na, title="Suggested Price line", color=color.new(line_color, 80), linewidth=1, display=display.all - display.status_line - display.price_scale)
+
+pCloudUpper = plot(show_cloud and
+     timeframe.isminutes ? cloudUpper : na,
+     "Suggested Price Cloud Upper",
+     color=color.new(color.gray, 95),
+     display=display.all - display.status_line - display.price_scale)
+
+pCloudLower = plot(show_cloud and
+     timeframe.isminutes ? cloudLower : na,
+     "Suggested Price Cloud Lower",
+     color=color.new(color.gray, 95),
+     display=display.all - display.status_line - display.price_scale)
+
+fill(
+     pCloudUpper,
+     pCloudLower,
+     color=color.new(line_color, 90),
+     title="Suggested Price Cloud")
