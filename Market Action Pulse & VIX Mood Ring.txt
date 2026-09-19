@@ -1,8 +1,16 @@
 // Based on: @BigWaveChartist https://bigwavechartist.substack.com/p/measuring-market-health 
 // and @JohnMuchow https://x.com/JohnMuchow/article/2033666214472409492
-// Disclaimer: This indicator is for educational purposes only and is not financial advice. Trading involves risk; use it at your own discretion and responsibility.
+// Risk Assessment Model (RAM) is a deterministic, always-evaluable RESEARCH hazard score. It deliberately does NOT present an unvalidated historical frequency as a calibrated probability. A future offline walk-forward calibration can map the frozen 0-100 score to an empirical 5%/42D probability without changing the UI.
+// Current families:
+//   • Market Action Pulse state
+//   • McClellan breadth z-score
+//   • VIX Mood Ring + divergence state
+//   • Target-specific QQQE/RSP extension + short-trend vulnerability
+// RAM remains OUTSIDE the VIX Mood Ring composite arithmetic.
+// Disclaimer: This indicator is for educational purposes only and is not financial advice. 
+// Trading involves risk; use it at your own discretion and responsibility.
 //@version=6
-indicator("Market Action Pulse & VIX Mood Ring", shorttitle="MAP+VMR", overlay=true)
+indicator("Market Action Pulse, VIX Mood Ring & Risk Assessment Model", shorttitle="MAP+VMR+RAM", overlay=true)
 
 //──────────────────────────────────────────────────────────────────────────────
 // Shared table inputs
@@ -126,6 +134,57 @@ vmrUseConfirmedBars = input.bool(
 vmrShowBackground = input.bool(false, "Tint chart background by VIX Mood color", group="VIX Mood Ring")
 
 vmrConfirmOffset = vmrUseConfirmedBars ? 1 : 0
+
+
+//──────────────────────────────────────────────────────────────────────────────
+// Risk Assessment Model (RAM) inputs
+//──────────────────────────────────────────────────────────────────────────────
+
+crmEnabled = input.bool(true, "Show Risk Assessment row", group="Risk Assessment Model")
+
+crmTargetMode = input.string(
+     "Follow Market Pulse",
+     "Primary RAM target",
+     options = ["Follow Market Pulse", "QQQE", "RSP"],
+     tooltip = "Follow Market Pulse uses RSP when the selected Market-health symbol is RSP; otherwise QQQE. QQQE and RSP are evaluated separately.",
+     group="Risk Assessment Model"
+)
+
+crmQqqeSymbol = input.symbol("NASDAQ:QQQE", "QQQE symbol", group="Risk Assessment Model")
+crmRspSymbol  = input.symbol("AMEX:RSP",    "RSP symbol",  group="Risk Assessment Model")
+
+crmShowBothTargets = input.bool(
+     true,
+     "Show QQQE + RSP hazard scores",
+     tooltip = "ON shows both target-specific 0-100 hazard scores. The selected primary target controls the RAM status/color.",
+     group="Risk Assessment Model"
+)
+
+crmDrawdownPct = input.float(
+     5.0,
+     "Correction target (%)",
+     minval = 1.0,
+     maxval = 25.0,
+     step = 0.5,
+     tooltip = "Research target shown in the dashboard. v0.2 outputs a hazard SCORE, not a calibrated probability.",
+     group="Risk Assessment Model"
+)
+
+crmHorizon = input.int(
+     42,
+     "Correction horizon (trading sessions)",
+     minval = 10,
+     maxval = 126,
+     tooltip = "Research horizon shown in the dashboard. 42 sessions is approximately two trading months.",
+     group="Risk Assessment Model"
+)
+
+// Research score thresholds. These are operating labels, not probability bins.
+// Keep ordered: L0 < L1 < L2 < L3; >= L3 threshold is L4.
+crmL0MaxScore = input.float(20.0, "LOW hazard score", minval=0.0, maxval=100.0, step=1.0, group="Risk Assessment Model")
+crmL1MaxScore = input.float(40.0, "NORMAL hazard score", minval=0.0, maxval=100.0, step=1.0, group="Risk Assessment Model")
+crmL2MaxScore = input.float(60.0, "ELEVATED hazard score", minval=0.0, maxval=100.0, step=1.0, group="Risk Assessment Model")
+crmL3MaxScore = input.float(80.0, "HIGH hazard score", minval=0.0, maxval=100.0, step=1.0, group="Risk Assessment Model")
 
 //──────────────────────────────────────────────────────────────────────────────
 // Market Action Pulse colors
@@ -704,6 +763,221 @@ divergenceColor =
      allClear                         ? vmrGreenBg :
      vmrGrayBg
 
+//══════════════════════════════════════════════════════════════════════════════
+// Risk Assessment Model (RAM) v0.2
+//══════════════════════════════════════════════════════════════════════════════
+//
+// Purpose
+// -------
+// Produce a compact, direct correction-hazard state without waiting for Pine to
+// self-train on whatever history happens to be loaded on the chart.
+//
+// IMPORTANT SCIENTIFIC CONTRACT
+// -----------------------------
+// • 0-100 is a RESEARCH HAZARD SCORE, not a calibrated probability.
+// • L0-L4 are deterministic operating labels derived from that score.
+// • The score can be calibrated offline later using purged walk-forward/OOS
+//   data. Until then, the dashboard never prints a fake probability.
+// • RAM does not alter Market Pulse exposure rules in v0.2.
+// • RAM does not enter the VIX Mood Ring composite score.
+//
+// Family weights
+// --------------
+//   Market Action Pulse risk : 35%
+//   McClellan breadth risk   : 30%
+//   VIX/tail-risk family     : 20%
+//   Target vulnerability     : 15%
+//
+// Missing families are omitted and the remaining weights are renormalized.
+
+f_crmMapRisk(_score) =>
+    float r = na
+    if not na(_score)
+        r := _score >= 5 ? 10.0 :
+             _score >= 4 ? 20.0 :
+             _score >= 3 ? 40.0 :
+             _score >= 2 ? 60.0 :
+             _score >= 1 ? 80.0 :
+             95.0
+    r
+
+f_crmBreadthRisk(_z) =>
+    // z >= +2 -> very healthy breadth; z <= -2 -> severe breadth stress.
+    na(_z) ? na : f_clamp100(50.0 - 22.5 * _z)
+
+f_crmVmrRisk(_composite, _divergence) =>
+    float baseRisk = na(_composite) ? na : f_clamp100(100.0 - _composite)
+
+    // Divergence belongs to the same volatility/tail family. We use it as a
+    // minimum family-risk floor rather than as another separately weighted vote.
+    float divergenceFloor =
+         _divergence == "Backwardation"        ? 95.0 :
+         _divergence == "Complacency Trap"     ? 75.0 :
+         _divergence == "Whipsaw Risk"         ? 80.0 :
+         _divergence == "Panic Easing"          ? 40.0 :
+         _divergence == "All Clear"             ? 10.0 :
+         0.0
+
+    na(baseRisk) ? divergenceFloor : math.max(baseRisk, divergenceFloor)
+
+f_crmTargetData(_offset) =>
+    float c     = close[_offset]
+    float h252  = ta.highest(high, 252)[_offset]
+    float ema5  = ta.ema(close, 5)[_offset]
+    float ema10 = ta.ema(close, 10)[_offset]
+    float ema20 = ta.ema(close, 20)[_offset]
+    [c, h252, ema5, ema10, ema20]
+
+f_crmTargetRisk(_close, _high252, _ema5, _ema10, _ema20) =>
+    float r = na
+    if not na(_close) and not na(_high252) and not na(_ema5) and not na(_ema10) and not na(_ema20) and _high252 > 0.0
+        float distFromHighPct = math.max(0.0, 100.0 * (_high252 - _close) / _high252)
+
+        // Correction-from-strength vulnerability: highest near the 252D high,
+        // fading progressively by ~15% below it. This is NOT a hard gate.
+        float proximityRisk = f_clamp100(100.0 - distFromHighPct * (100.0 / 15.0))
+
+        // Short-trend deterioration. The weights total 100 when price is below
+        // all three EMAs; a healthy trend contributes zero deterioration risk.
+        float trendRisk = 0.0
+        trendRisk += _close < _ema5  ? 25.0 : 0.0
+        trendRisk += _close < _ema10 ? 30.0 : 0.0
+        trendRisk += _close < _ema20 ? 45.0 : 0.0
+
+        r := f_clamp100(0.55 * proximityRisk + 0.45 * trendRisk)
+    r
+
+f_crmWeightedScore(_mapRisk, _breadthRisk, _vmrRisk, _targetRisk) =>
+    float weighted = 0.0
+    float weightSum = 0.0
+
+    if not na(_mapRisk)
+        weighted += 0.35 * _mapRisk
+        weightSum += 0.35
+    if not na(_breadthRisk)
+        weighted += 0.30 * _breadthRisk
+        weightSum += 0.30
+    if not na(_vmrRisk)
+        weighted += 0.20 * _vmrRisk
+        weightSum += 0.20
+    if not na(_targetRisk)
+        weighted += 0.15 * _targetRisk
+        weightSum += 0.15
+
+    weightSum > 0.0 ? f_clamp100(weighted / weightSum) : na
+
+f_crmLevel(_score) =>
+    string level = "WARMING UP"
+    if not na(_score)
+        level := _score < crmL0MaxScore ? "LOW" :
+                 _score < crmL1MaxScore ? "NORMAL" :
+                 _score < crmL2MaxScore ? "ELEVATED" :
+                 _score < crmL3MaxScore ? "HIGH" :
+                 "EXTREME"
+    level
+
+f_crmLevelColor(_level) =>
+    // Explicitly color ALL RAM statuses, including WARMING UP.
+    color c =
+         str.startswith(_level, "LOW") ? vmrGreenBg :
+         str.startswith(_level, "NORMAL") ? vmrBlueBg :
+         str.startswith(_level, "ELEVATED") ? vmrYellowBg :
+         str.startswith(_level, "HIGH") ? vmrPurpleBg :
+         str.startswith(_level, "EXTREME") ? vmrRedBg :
+         _level == "WARMING UP"        ? vmrAmberBg :
+         vmrGrayBg
+    c
+
+f_crmTextColor(_level) =>
+    (str.startswith(_level, "ELEVATED") or _level == "WARMING UP") ? color.black : color.white
+
+f_crmScoreText(_x) =>
+    na(_x) ? "N/A" : str.tostring(math.round(_x)) + "/100"
+
+f_crmInputQuality(_mapRisk, _breadthRisk, _vmrRisk, _targetRisk) =>
+    int n = 0
+    n += not na(_mapRisk) ? 1 : 0
+    n += not na(_breadthRisk) ? 1 : 0
+    n += not na(_vmrRisk) ? 1 : 0
+    n += not na(_targetRisk) ? 1 : 0
+
+    string q =
+         n == 4 ? "FULL INPUTS" :
+         n == 3 ? "PARTIAL 3/4" :
+         n == 2 ? "PARTIAL 2/4" :
+         n == 1 ? "PARTIAL 1/4" :
+         "NO INPUTS"
+    q
+
+// Target data follows the same live/confirmed preference as Market Pulse.
+crmTargetOffset = tmhUseConfirmedBars ? 1 : 0
+
+[crmQClose, crmQHigh252, crmQEma5, crmQEma10, crmQEma20] =
+     request.security(
+         crmQqqeSymbol,
+         "D",
+         f_crmTargetData(crmTargetOffset),
+         barmerge.gaps_off,
+         barmerge.lookahead_on
+     )
+
+[crmRClose, crmRHigh252, crmREma5, crmREma10, crmREma20] =
+     request.security(
+         crmRspSymbol,
+         "D",
+         f_crmTargetData(crmTargetOffset),
+         barmerge.gaps_off,
+         barmerge.lookahead_on
+     )
+
+crmMapRisk     = f_crmMapRisk(tmhDashboardScore)
+crmBreadthRisk = f_crmBreadthRisk(mccZScore)
+crmVmrRisk     = f_crmVmrRisk(compositeScore, divergenceLabel)
+crmQTargetRisk = f_crmTargetRisk(crmQClose, crmQHigh252, crmQEma5, crmQEma10, crmQEma20)
+crmRTargetRisk = f_crmTargetRisk(crmRClose, crmRHigh252, crmREma5, crmREma10, crmREma20)
+
+crmQScore = f_crmWeightedScore(crmMapRisk, crmBreadthRisk, crmVmrRisk, crmQTargetRisk)
+crmRScore = f_crmWeightedScore(crmMapRisk, crmBreadthRisk, crmVmrRisk, crmRTargetRisk)
+
+// Follow Market Pulse maps an RSP health symbol to RSP; otherwise defaults QQQE.
+crmHealthLooksRsp = str.contains(str.upper(healthSymbol), "RSP")
+crmPrimaryIsRsp =
+     crmTargetMode == "RSP" ? true :
+     crmTargetMode == "QQQE" ? false :
+     crmHealthLooksRsp
+
+crmPrimaryName  = crmPrimaryIsRsp ? "RSP" : "QQQE"
+crmPrimaryScore = crmPrimaryIsRsp ? crmRScore : crmQScore
+crmPrimaryTgtRisk = crmPrimaryIsRsp ? crmRTargetRisk : crmQTargetRisk
+
+crmPrimaryLevel = f_crmLevel(crmPrimaryScore)
+crmPrimaryColor = f_crmLevelColor(crmPrimaryLevel)
+crmPrimaryText  = f_crmTextColor(crmPrimaryLevel)
+crmInputQuality = f_crmInputQuality(crmMapRisk, crmBreadthRisk, crmVmrRisk, crmPrimaryTgtRisk)
+
+crmTrend =
+     na(crmPrimaryScore) or na(crmPrimaryScore[1]) ? "—" :
+     crmPrimaryScore > crmPrimaryScore[1] + 2.0 ? "↑ Rising" :
+     crmPrimaryScore < crmPrimaryScore[1] - 2.0 ? "↓ Falling" :
+     "→ Stable"
+
+crmPrimaryValueText =
+     crmPrimaryName + " " + f_crmScoreText(crmPrimaryScore) +
+     "\nTarget " + str.tostring(crmDrawdownPct, "#.#") + "%/" + str.tostring(crmHorizon) + "D"
+
+crmBothValueText =
+     "QQQE " + f_crmScoreText(crmQScore) +
+     "\nRSP " + f_crmScoreText(crmRScore) +
+     "\nTarget " + str.tostring(crmDrawdownPct, "#.#") + "%/" + str.tostring(crmHorizon) + "D"
+
+crmValueText = crmShowBothTargets ? crmBothValueText : crmPrimaryValueText
+
+crmScoreText =
+     f_crmScoreText(crmPrimaryScore) +
+     "\n" + crmTrend +
+     "\n" + crmInputQuality +
+     "\nRESEARCH"
+
 //──────────────────────────────────────────────────────────────────────────────
 // Playbook rules
 //──────────────────────────────────────────────────────────────────────────────
@@ -775,6 +1049,14 @@ plot(vix3m,          title="VIX3M", display=display.data_window)
 plot(termRatio,      title="VIX / VIX3M", display=display.data_window)
 plot(vvix,           title="VVIX", display=display.data_window)
 plot(skew,           title="SKEW", display=display.data_window)
+
+plot(crmQScore,       title="RAM QQQE Research Hazard Score", display=display.data_window)
+plot(crmRScore,       title="RAM RSP Research Hazard Score", display=display.data_window)
+plot(crmMapRisk,      title="RAM Market Pulse Risk Family", display=display.data_window)
+plot(crmBreadthRisk,  title="RAM Breadth Risk Family", display=display.data_window)
+plot(crmVmrRisk,      title="RAM VIX/Tail Risk Family", display=display.data_window)
+plot(crmQTargetRisk,  title="RAM QQQE Target Vulnerability", display=display.data_window)
+plot(crmRTargetRisk,  title="RAM RSP Target Vulnerability", display=display.data_window)
 
 //──────────────────────────────────────────────────────────────────────────────
 // Combined dashboard table
@@ -873,6 +1155,17 @@ if showTable and barstate.islast
     table.cell(dash, 1, 17, "VIX 35%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 2, 17, "Term 25% / SKEW 25%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
     table.cell(dash, 3, 17, "VVIX 15%", bgcolor=vmrGrayBg, text_color=color.white, text_size=tableTextSize)
+
+    if crmEnabled
+        table.cell(dash, 0, 18, "Risk Assessment\n" + crmPrimaryName, bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+        table.cell(dash, 1, 18, crmPrimaryLevel, bgcolor=crmPrimaryColor, text_color=crmPrimaryText, text_size=tableTextSize)
+        table.cell(dash, 2, 18, crmValueText, bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+        table.cell(dash, 3, 18, crmScoreText, bgcolor=crmPrimaryColor, text_color=crmPrimaryText, text_size=tableTextSize)
+    else
+        table.cell(dash, 0, 18, "", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+        table.cell(dash, 1, 18, "", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+        table.cell(dash, 2, 18, "", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
+        table.cell(dash, 3, 18, "", bgcolor=vmrDarkBg, text_color=color.white, text_size=tableTextSize)
 
 if not showTable and barstate.islast
     table.clear(dash, 0, 0, 3, 18)
