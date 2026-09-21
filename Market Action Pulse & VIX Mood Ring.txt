@@ -139,7 +139,18 @@ vmrConfirmOffset = vmrUseConfirmedBars ? 1 : 0
 //──────────────────────────────────────────────────────────────────────────────
 // Risk Assessment Model (RAM) inputs
 //──────────────────────────────────────────────────────────────────────────────
-
+// RAM is a deterministic, always-evaluable RESEARCH hazard score.
+// It deliberately does NOT present an unvalidated historical frequency as a
+// calibrated probability. A future offline walk-forward calibration can map the
+// frozen 0-100 score to an empirical 5%/42D probability without changing the UI.
+//
+// Current families:
+//   • Market Action Pulse state
+//   • McClellan breadth z-score
+//   • VIX Mood Ring + divergence state
+//   • Target-specific QQQE/RSP extension + short-trend vulnerability
+//
+// RAM remains OUTSIDE the VIX Mood Ring composite arithmetic.
 crmEnabled = input.bool(true, "Show Risk Assessment row", group="Risk Assessment Model")
 
 crmTargetMode = input.string(
@@ -660,7 +671,7 @@ f_skewRegime(_x) =>
     string r = "N/A"
 
     if not na(_x)
-        r := _x < 115.0 ? "Low Tail Risk" :
+        r := _x < 100.0 ? "Low Tail Risk" :
              _x < 130.0 ? "Normal" :
              _x < 145.0 ? "Elevated" :
              "High Tail Risk"
@@ -707,8 +718,7 @@ dashboardScore = na(compositeScore) ? na : math.round(compositeScore)
 complacencyTrap =
      not na(vix) and
      not na(skew) and
-     vix < 17.0 and
-     skew > 140.0
+     ((vix < 17.0 and skew > 145.0) or (vix[2] < vix and skew[2] > skew))
 
 backwardation =
      not na(termRatio) and
@@ -722,7 +732,7 @@ backwardationResolved =
 
 vvixStillHot =
      not na(vvix) and
-     vvix >= 115.0
+     vvix >= 101.0
 
 vixFallingButVvixHot =
      not na(vix) and
