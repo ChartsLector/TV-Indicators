@@ -201,7 +201,7 @@ crmL3MaxScore = input.float(80.0, "HIGH hazard score", minval=0.0, maxval=100.0,
 // Market Action Pulse colors
 //──────────────────────────────────────────────────────────────────────────────
 tmhGreenBg  = color.rgb(0, 130, 0)
-tmhBlueBg   = color.rgb(150, 182, 243)
+tmhBlueBg   = color.rgb(80, 135, 220)
 tmhYellowBg = color.rgb(220, 190, 0)
 tmhAmberBg  = color.rgb(255, 150, 0)
 tmhPurpleBg = color.rgb(162, 0, 255)
