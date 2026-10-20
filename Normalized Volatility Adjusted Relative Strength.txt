@@ -2,9 +2,8 @@
 // https://www.tradingview.com/script/nbgyYwu1-Volatility-Adjusted-Relative-Strength-VARS-Histogram-Option/
 // and by https://x.com/jfsrev/status/1976121442086564329
 // The indicator uses two-stage normalization:
-//     1. ATR normalization (14 periods)
-//     2. Relative strength calculation (50 periods)
-//     3. RMS normalization (100 periods) such that It standardizes amplitude without imposing fixed bounds.
+//     1. ATR normalization (14 periods) followed by Relative strength calculation (50 periods).
+//     2. RMS normalization (100 periods) such that It standardizes amplitude without imposing fixed bounds.
 // Disclaimer: This indicator is for educational purposes only and is not financial advice.
 // Trading involves risk; use it at your own discretion and responsibility.
 //@version=6
