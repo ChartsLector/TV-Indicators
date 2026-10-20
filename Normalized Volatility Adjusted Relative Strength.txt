@@ -1,0 +1,228 @@
+// Inspired by @jfsrev: 
+// https://www.tradingview.com/script/nbgyYwu1-Volatility-Adjusted-Relative-Strength-VARS-Histogram-Option/
+// and by https://x.com/jfsrev/status/1976121442086564329
+// The indicator uses two-stage normalization:
+//     1. ATR normalization (14 periods)
+//     2. Relative strength calculation (50 periods)
+//     3. RMS normalization (100 periods) such that It standardizes amplitude without imposing fixed bounds.
+// Disclaimer: This indicator is for educational purposes only and is not financial advice.
+// Trading involves risk; use it at your own discretion and responsibility.
+//@version=6
+indicator("Normalized Volatility Adjusted Relative Strength", shorttitle = "NVARS vs SPY", overlay = false)
+
+// =============================================================================
+// INPUTS
+// =============================================================================
+
+string instrument_comparison = input.symbol("SPY", "Comparison Instrument")
+
+lookback_length = input.int(
+     50,
+     "Look-back Length",
+     minval = 1
+)
+
+ma_length = input.int(
+     20,
+     "SLOW MA Length"
+)
+
+fast_ma_length = input.int(
+     8,
+     "FAST MA Length"
+)
+
+ma_type = input.string(
+     "sma",
+     options = ["hma", "sma", "ema"],
+     title = "Moving Average Type"
+)
+
+atr_length = input.int(
+     14,
+     "ATR Length"
+)
+
+// Final VARS normalization
+norm_length = input.int(
+     100,
+     "VARS Normalization Length",
+     minval = 20,
+     tooltip = "Normalizes the final VARS amplitude by its rolling RMS while preserving zero as benchmark-relative parity."
+)
+
+
+// =============================================================================
+// REQUEST SECURITY DATA
+// =============================================================================
+
+inst = request.security(
+     instrument_comparison,
+     "",
+     close
+)
+
+
+// =============================================================================
+// VOLATILITY-ADJUSTED CHANGES
+// =============================================================================
+
+// Normalize comparison-instrument change by its ATR
+inst_atr = request.security(
+     instrument_comparison,
+     "",
+     ta.atr(atr_length)
+)
+
+normalized_change =
+     inst_atr > 0
+     ? (inst - inst[1]) / inst_atr
+     : na
+
+
+// Normalize chart-symbol change by its ATR
+index_atr = request.security(
+     syminfo.tickerid,
+     "",
+     ta.atr(atr_length)
+)
+
+index_change =
+     index_atr > 0
+     ? (close - close[1]) / index_atr
+     : na
+
+
+// =============================================================================
+// CUMULATIVE VOLATILITY-ADJUSTED CHANGE
+// =============================================================================
+
+var float cumulative_change = na
+var float cumulative_change_index = na
+
+if na(cumulative_change)
+    cumulative_change := math.sum(normalized_change, lookback_length)
+else
+    cumulative_change := math.sum(normalized_change, lookback_length)
+
+if na(cumulative_change_index)
+    cumulative_change_index := math.sum(index_change, lookback_length)
+else
+    cumulative_change_index := math.sum(index_change, lookback_length)
+
+
+// =============================================================================
+// RAW VARS
+//
+// Positive = chart symbol outperforming comparison instrument
+// Negative = chart symbol underperforming comparison instrument
+// =============================================================================
+
+rs_raw = cumulative_change_index - cumulative_change
+
+
+// =============================================================================
+// ZERO-PRESERVING RMS NORMALIZATION
+//
+// RMS = sqrt(mean(rs_raw²))
+//
+// Dividing by RMS rescales the amplitude but DOES NOT move the zero line.
+// Therefore:
+//
+//     NVARS > 0 = benchmark-relative outperformance
+//     NVARS < 0 = benchmark-relative underperformance
+// =============================================================================
+
+rs_rms = math.sqrt(
+     ta.sma(
+         rs_raw * rs_raw,
+         norm_length
+     )
+)
+
+rs =
+     not na(rs_rms) and rs_rms > 0
+     ? rs_raw / rs_rms
+     : na
+
+
+// =============================================================================
+// MOVING AVERAGE
+// =============================================================================
+
+ma_function(ma_type, length) =>
+    ema_1 = ta.ema(rs, length)
+    hma_1 = ta.hma(rs, length)
+    sma_1 = ta.sma(rs, length)
+
+    ma_type == "ema" ? ema_1 :
+     ma_type == "hma" ? hma_1 :
+     sma_1
+
+rs_ma = ma_function(ma_type, ma_length)
+
+fast_rs_ma = ma_function(ma_type, fast_ma_length)
+
+
+// =============================================================================
+// HISTOGRAM COLOR LOGIC
+//
+// EXACT SAME COLORING THEME AS THE PREVIOUS VARS HISTOGRAM:
+//
+// 1. Positive + above MA  = dark green
+// 2. Positive + below MA  = bright green
+// 3. Negative + above MA  = light red
+// 4. Negative + below MA  = dark red
+// =============================================================================
+
+rs_col =
+     rs > 0
+     ? (rs > rs_ma ? #4ac4ff : #8cdaff)
+     : (rs > rs_ma ? #ff9191 : #ff6161)
+
+
+// =============================================================================
+// ZERO LINE
+// =============================================================================
+
+zero_plot = plot(
+     0,
+     "ZERO LINE",
+     color.new(#363a45, 0),
+     display = display.all - display.price_scale - display.status_line
+)
+
+
+// =============================================================================
+// HISTOGRAM
+// =============================================================================
+
+rs_plot = plot(
+     rs,
+     "NVARS",
+     color = rs_col,
+     style = plot.style_columns,
+     linewidth = 4,
+     display = display.all - display.price_scale - display.status_line
+)
+
+
+// =============================================================================
+// MOVING AVERAGE
+// =============================================================================
+
+ma_plot = plot(
+     rs_ma,
+     "NVARS MA",
+     color = color.blue,
+     linewidth = 1,
+     display = display.all - display.price_scale - display.status_line
+)
+
+fast_ma_plot = plot(
+     fast_rs_ma,
+     "FAST NVARS MA",
+     color = color.rgb(254, 124, 124),
+     linewidth = 1,
+     display = display.all - display.price_scale - display.status_line
+)
