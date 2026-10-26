@@ -1,0 +1,324 @@
+// Inspired by https://www.tradingview.com/v/VRgQs55V/ 
+// and https://x.com/ryuz6k1/status/2054245337519317028 (by @ryuz6k1)
+// HTF Volume Profile Density Zones estimates higher-timeframe volume distributions using lower-timeframe candle data.
+// It displays the Point of Control (POC), Value Area High/Low (VAH/VAL), and higher-timeframe ghost candles.
+// Volume-spike bubbles highlight unusually active intrabars, while density zones identify clusters of concentrated spike volume.
+// Zones appear only after higher-timeframe completion, with affected zones suppressed when history is partial or volume is missing.
+// Colors reflect candle direction—not actual buying or selling pressure—and the indicator is intended for educational analysis.
+// Disclaimer: This indicator is for educational purposes only and is not financial advice. 
+// Trading involves risk; use it at your own discretion and responsibility.
+//@version=6
+
+indicator("HTF Volume Profile Density Zones", overlay=true, max_boxes_count=500, max_lines_count=100, max_labels_count=200)
+
+string htf = input.timeframe("240", "Higher timeframe")
+string ltf = input.timeframe("1", "Intrabar timeframe")
+int keep = input.int(3, "HTF periods retained (including developing)", minval=1, maxval=4)
+int rows = input.int(40, "Profile price rows", minval=12, maxval=64)
+float vaPct = input.float(70, "Value area %", minval=1, maxval=100) / 100
+int baseline = input.int(50, "Prior intrabars in volume baseline", minval=5, maxval=500)
+float spikeMult = input.float(3, "Spike / prior mean volume", minval=1.1, step=0.1)
+int minSpikes = input.int(2, "Minimum spikes in density cluster", minval=1, maxval=20)
+float densityPct = input.float(35, "Density threshold (% of peak spike-volume row)", minval=1, maxval=100) / 100
+int bubbleLimit = input.int(24, "Most recent bubbles per HTF period", minval=0, maxval=40)
+int forward = input.int(20, "Zone extension from latest close (nominal chart bars)", minval=0, maxval=100, tooltip="Timestamp projection; market closures are not skipped. Zones start at the chart close when HTF completion is first observed.")
+bool showDeveloping = input.bool(true, "Show developing HTF period")
+bool showProfile = input.bool(true, "Show volume profiles")
+bool showGhost = input.bool(true, "Show ghost candles")
+bool showZones = input.bool(true, "Show confirmed density zones")
+color bull = input.color(color.rgb(53, 201, 222), "Up color")
+color bear = input.color(color.rgb(220, 24, 132), "Down color")
+
+if barstate.isfirst
+    if not chart.is_standard or na(timeframe.in_seconds())
+        runtime.error("Use standard time-based candles.")
+    if timeframe.in_seconds(htf) <= timeframe.in_seconds()
+        runtime.error("Higher timeframe must exceed the chart timeframe.")
+    if timeframe.in_seconds(ltf) >= timeframe.in_seconds()
+        runtime.error("Intrabar timeframe must be below the chart timeframe.")
+
+const int MAX_SAMPLES = 4000
+
+type Sample
+    int t
+    float o
+    float h
+    float l
+    float c
+    float v
+    float ratio
+
+type Period
+    int start
+    int finish
+    array<Sample> samples
+    array<Sample> bubbles
+    array<box> boxes
+    array<box> zones
+    array<line> lines
+    array<label> labels
+    float hi = na
+    float lo = na
+    float firstOpen = na
+    float lastClose = na
+    int lastTime = na
+    int availableAt = na
+    bool partial = false
+    bool overflow = false
+    bool missingVolume = false
+    bool missingBaseline = false
+    bool badPrice = false
+    bool dirty = true
+    bool drawn = false
+
+var array<Period> periods = array.new<Period>()
+var table status = table.new(position.top_right, 1, 2)
+
+f_new(int st, int en, bool partial) =>
+    Period.new(st, en, array.new<Sample>(), array.new<Sample>(), array.new<box>(), array.new<box>(), array.new<line>(), array.new<label>(), partial=partial)
+
+f_clear(Period p) =>
+    for b in p.boxes
+        box.delete(b)
+    for b in p.zones
+        box.delete(b)
+    for l in p.lines
+        line.delete(l)
+    for lb in p.labels
+        label.delete(lb)
+    array.clear(p.boxes)
+    array.clear(p.zones)
+    array.clear(p.lines)
+    array.clear(p.labels)
+    p.drawn := false
+
+f_box(Period p, int left, float top, int right, float bottom, color fill, color border) =>
+    array.push(p.boxes, box.new(left=left, top=top, right=right, bottom=bottom, xloc=xloc.bar_time, bgcolor=fill, border_color=border))
+
+f_level(Period p, int left, int right, float price, color col, string caption) =>
+    array.push(p.lines, line.new(x1=left, y1=price, x2=right, y2=price, xloc=xloc.bar_time, color=col))
+    array.push(p.labels, label.new(x=left, y=price, text=caption, xloc=xloc.bar_time, style=label.style_label_right, color=color.new(col, 100), textcolor=col, size=size.tiny))
+
+f_row(float price, float lo, float step) =>
+    math.max(0, math.min(rows - 1, int(math.floor((price - lo) / step))))
+
+f_render(Period p, int extensionEnd) =>
+    bool complete = not na(p.availableAt)
+    bool impaired = p.partial or p.missingVolume or p.missingBaseline or p.badPrice
+    int n = array.size(p.samples)
+    if n > 0 and not p.overflow
+        float step = math.max((p.hi - p.lo) / rows, syminfo.mintick)
+        array<float> vol = array.new<float>(rows, 0.0)
+        array<float> delta = array.new<float>(rows + 1, 0.0)
+        array<float> spikes = array.new<float>(rows, 0.0)
+        array<int> hits = array.new<int>(rows, 0)
+        array<float> signedSpikes = array.new<float>(rows, 0.0)
+        // Full interior rows all receive the same volume. Range-add them using
+        // a difference array; only the two edge rows require overlap arithmetic.
+        for s in p.samples
+            int a = f_row(s.l, p.lo, step)
+            int b = f_row(s.h, p.lo, step)
+            if a == b
+                array.set(vol, a, array.get(vol, a) + s.v)
+            else
+                float perPrice = s.v / (s.h - s.l)
+                float firstPart = math.max(0.0, math.min(s.h, p.lo + (a + 1) * step) - s.l)
+                float lastPart = math.max(0.0, s.h - math.max(s.l, p.lo + b * step))
+                array.set(vol, a, array.get(vol, a) + perPrice * firstPart)
+                array.set(vol, b, array.get(vol, b) + perPrice * lastPart)
+                if b > a + 1
+                    float fullRow = perPrice * step
+                    array.set(delta, a + 1, array.get(delta, a + 1) + fullRow)
+                    array.set(delta, b, array.get(delta, b) - fullRow)
+            if s.ratio >= spikeMult
+                int r = f_row((s.h + s.l + s.c) / 3, p.lo, step)
+                array.set(spikes, r, array.get(spikes, r) + s.v)
+                array.set(hits, r, array.get(hits, r) + 1)
+                array.set(signedSpikes, r, array.get(signedSpikes, r) + (s.c >= s.o ? s.v : -s.v))
+        float running = 0.0
+        for r = 0 to rows - 1
+            running += array.get(delta, r)
+            array.set(vol, r, math.max(0.0, array.get(vol, r) + running))
+        float total = array.sum(vol)
+        float peak = array.max(vol)
+        color col = p.lastClose >= p.firstOpen ? bull : bear
+        int span = p.finish - p.start
+        int anchor = p.start + int(span * 0.88)
+        int width = int(span * 0.26)
+        if total > 0 and peak > 0
+            // Resolve near-ties toward the lower row: tolerance = 1e-8 of total.
+            // This also avoids expanding VA on insignificant floating-point dust.
+            float tolerance = total * 1e-8
+            int poc = 0
+            while poc < rows - 1 and peak - array.get(vol, poc) > tolerance
+                poc += 1
+            int vaLo = poc
+            int vaHi = poc
+            float covered = array.get(vol, poc)
+            while covered + tolerance < total * vaPct and (vaLo > 0 or vaHi < rows - 1)
+                float down = vaLo > 0 ? array.get(vol, vaLo - 1) : -1.0
+                float up = vaHi < rows - 1 ? array.get(vol, vaHi + 1) : -1.0
+                if vaLo == 0 or (vaHi < rows - 1 and up > down + tolerance)
+                    vaHi += 1
+                    covered += up
+                else
+                    vaLo -= 1
+                    covered += down
+            if showProfile
+                for r = 0 to rows - 1
+                    float v = array.get(vol, r)
+                    if v > 0
+                        int left = anchor - int(width * v / peak)
+                        f_box(p, left, p.lo + (r + 1) * step, anchor, p.lo + r * step, color.new(col, r >= vaLo and r <= vaHi ? 48 : 78), color.new(col, 65))
+                string prefix = (complete ? "" : "Developing ") + (impaired ? "[limited] " : "")
+                f_level(p, p.start, anchor, p.lo + (poc + 0.5) * step, color.yellow, prefix + "POC")
+                f_level(p, p.start, anchor, p.lo + (vaHi + 1) * step, col, prefix + "VAH")
+                f_level(p, p.start, anchor, p.lo + vaLo * step, col, prefix + "VAL")
+            float spikePeak = array.max(spikes)
+            if showZones and complete and not impaired and spikePeak > 0
+                int r = 0
+                while r < rows
+                    if array.get(spikes, r) >= spikePeak * densityPct
+                        int lower = r
+                        int count = 0
+                        float direction = 0.0
+                        while r < rows
+                            if array.get(spikes, r) < spikePeak * densityPct
+                                break
+                            count += array.get(hits, r)
+                            direction += array.get(signedSpikes, r)
+                            r += 1
+                        if count >= minSpikes
+                            color zoneColor = direction >= 0 ? bull : bear
+                            array.push(p.zones, box.new(left=p.availableAt, top=p.lo + r * step, right=math.max(p.availableAt + 1, extensionEnd), bottom=p.lo + lower * step, xloc=xloc.bar_time, bgcolor=color.new(zoneColor, 84), border_color=color.new(zoneColor, 70)))
+                    else
+                        r += 1
+        if showGhost
+            int mid = p.start + int(span * 0.96)
+            int half = math.max(1, int(span * 0.015))
+            array.push(p.lines, line.new(x1=mid, y1=p.lo, x2=mid, y2=p.hi, xloc=xloc.bar_time, color=col))
+            f_box(p, mid - half, math.max(p.firstOpen, p.lastClose), mid + half, math.min(p.firstOpen, p.lastClose), color.new(col, 75), col)
+        for s in p.bubbles
+            color bc = s.c >= s.o ? bull : bear
+            string bs = s.ratio >= spikeMult * 3 ? size.large : s.ratio >= spikeMult * 1.5 ? size.normal : size.small
+            string tip = "Intrabar volume: " + str.tostring(s.v) + "\nPrior-mean multiple: " + str.tostring(s.ratio, "#.##") + "\nColor = candle direction, not aggressor-side flow"
+            array.push(p.labels, label.new(x=s.t, y=(s.h + s.l + s.c) / 3, text="", xloc=xloc.bar_time, style=label.style_circle, color=color.new(bc, 35), size=bs, tooltip=tip))
+        p.drawn := true
+    p.dirty := false
+
+// Prior baseline excludes the current intrabar. Do not weaken its history window.
+[ts, tcs, os, hs, ls, cs, vs, refs, starts, ends] = request.security_lower_tf(syminfo.tickerid, ltf, [time, time_close, open, high, low, close, volume, ta.sma(volume, baseline)[1], time(htf), time_close(htf)], ignore_invalid_timeframe=true)
+
+if barstate.isconfirmed
+    if array.size(ts) == 0
+        // Flag known missing chart bars overlapping any retained period.
+        // Exchange/session gaps with no chart bar are not assumed to be errors.
+        for p in periods
+            if time < p.finish and time_close > p.start
+                p.partial := true
+                p.dirty := true
+    else
+        for i = 0 to array.size(ts) - 1
+            int st = array.get(starts, i)
+            int en = array.get(ends, i)
+            int t = array.get(ts, i)
+            int tc = array.get(tcs, i)
+            if not na(st) and not na(en) and not na(t)
+                bool newPeriod = array.size(periods) == 0
+                if not newPeriod
+                    newPeriod := array.get(periods, array.size(periods) - 1).start != st
+                if newPeriod
+                    // Conservative first-period handling is retained.
+                    bool partial = array.size(periods) == 0 or t != st
+                    if array.size(periods) >= keep
+                        Period old = array.shift(periods)
+                        f_clear(old)
+                    array.push(periods, f_new(st, en, partial))
+                Period p = array.get(periods, array.size(periods) - 1)
+                if na(p.lastTime) or t > p.lastTime
+                    p.lastTime := t
+                    p.dirty := true
+                    float o = array.get(os, i)
+                    float h = array.get(hs, i)
+                    float l = array.get(ls, i)
+                    float c = array.get(cs, i)
+                    float v = array.get(vs, i)
+                    float ref = array.get(refs, i)
+                    bool validPrice = not na(o) and not na(h) and not na(l) and not na(c) and h >= l and h >= math.max(o, c) and l <= math.min(o, c)
+                    p.missingVolume := p.missingVolume or na(v) or v < 0
+                    p.missingBaseline := p.missingBaseline or na(ref) or ref <= 0
+                    p.badPrice := p.badPrice or not validPrice
+                    // A single LTF candle cannot be split faithfully across HTF boundaries.
+                    p.partial := p.partial or na(tc) or tc > en or t < st
+                    if validPrice
+                        if array.size(p.samples) < MAX_SAMPLES
+                            float cleanV = na(v) or v < 0 ? 0.0 : v
+                            float ratio = not na(ref) and ref > 0 ? cleanV / ref : 0.0
+                            Sample s = Sample.new(t, o, h, l, c, cleanV, ratio)
+                            if array.size(p.samples) == 0
+                                p.firstOpen := o
+                                p.hi := h
+                                p.lo := l
+                            else
+                                p.hi := math.max(p.hi, h)
+                                p.lo := math.min(p.lo, l)
+                            p.lastClose := c
+                            array.push(p.samples, s)
+                            if bubbleLimit > 0 and ratio >= spikeMult
+                                array.push(p.bubbles, s)
+                                if array.size(p.bubbles) > bubbleLimit
+                                    array.shift(p.bubbles)
+                        else
+                            p.overflow := true
+            else
+                for p in periods
+                    if time < p.finish and time_close > p.start
+                        p.partial := true
+                        p.dirty := true
+    for p in periods
+        if na(p.availableAt) and p.finish <= time_close
+            p.availableAt := time_close
+            p.dirty := true
+
+// Bootstrap on the last closed historical bar so drawings exist when attached
+// during a live candle. Thereafter mutate drawings only at confirmed chart close.
+// Ordinary `var` state survives realtime rollback at the committed close.
+bool renderNow = barstate.islastconfirmedhistory or (barstate.islast and barstate.isconfirmed)
+if renderNow
+    int extensionEnd = time_close + int(timeframe.in_seconds() * 1000 * forward)
+    int partialCount = 0
+    int overflowCount = 0
+    int volumeCount = 0
+    int baselineCount = 0
+    int priceCount = 0
+    int developingCount = 0
+    for p in periods
+        partialCount += p.partial ? 1 : 0
+        overflowCount += p.overflow ? 1 : 0
+        volumeCount += p.missingVolume ? 1 : 0
+        baselineCount += p.missingBaseline ? 1 : 0
+        priceCount += p.badPrice ? 1 : 0
+        bool complete = not na(p.availableAt)
+        developingCount += complete ? 0 : 1
+        bool visible = (complete or showDeveloping) and not p.overflow
+        if visible and (p.dirty or not p.drawn)
+            f_clear(p)
+            f_render(p, extensionEnd)
+        else if not visible and p.drawn
+            f_clear(p)
+        for z in p.zones
+            box.set_right(z, math.max(p.availableAt + 1, extensionEnd))
+    string note = "Chart-close updates | Candle-direction proxy"
+    if array.size(periods) == 0
+        note := "No intrabar data available"
+    else
+        note += "\nRetained: " + str.tostring(array.size(periods)) + " | Developing: " + str.tostring(developingCount)
+        if partialCount + overflowCount + volumeCount + baselineCount + priceCount > 0
+            note += "\nLimited periods (counts may overlap): partial " + str.tostring(partialCount) + ", volume " + str.tostring(volumeCount) + ", baseline " + str.tostring(baselineCount) + ", price " + str.tostring(priceCount)
+            note += "\nAffected density zones suppressed"
+        if overflowCount > 0
+            note += "\nOverflow: " + str.tostring(overflowCount) + " (>4000 intrabars). Increase intrabar timeframe."
+    if array.size(ts) == 0
+        note += "\nLatest closed chart bar: no intrabars"
+    table.cell(status, 0, 0, "HTF " + htf + " / Intrabar " + ltf, text_color=color.white, bgcolor=color.new(color.black, 20))
+    table.cell(status, 0, 1, note, text_color=color.orange, bgcolor=color.new(color.black, 20), text_size=size.small)
